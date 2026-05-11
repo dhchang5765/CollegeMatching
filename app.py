@@ -85,7 +85,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def require_login() -> bool:
-    password_hash = get_secret_value("APP_PASSWORD_HASH", "")
+    stored_hash = get_secret_value("APP_PASSWORD_HASH", "")
     if not stored_hash:
         st.warning('APP_PASSWORD_HASH가 설정되지 않았습니다. Streamlit Cloud의 Secrets를 확인하십시오.')
         st.stop()
