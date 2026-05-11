@@ -11,7 +11,7 @@ VAMOS EDULAB MOS Application
 
 ```text
 your-repo/
-├─ app_streamlit_secure_ui.py
+├─ app.py
 ├─ seoul_gyeonggi_university_db.json
 ├─ requirements.txt
 ├─ packages.txt
