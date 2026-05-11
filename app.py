@@ -9,14 +9,12 @@ from typing import Dict, List, Tuple, Optional
 
 import streamlit as st
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 
 try:
     from google import genai
 except Exception:
     genai = None
 
-load_dotenv()
 
 GEMINI_MODEL = "gemini-3-flash"
 JSON_DB_PATH = "seoul_gyeonggi_university_db.json"
@@ -44,6 +42,27 @@ SPECIAL_PATTERNS = {
     "grade": [r"([0-9.]+)등급", r"내신\s*([0-9.]+)", r"모평\s*([0-9.]+)등급"]
 }
 
+def get_secret_value(key: str, default: str | None = None) -> str | None:
+    try:
+        if hasattr(st, "secrets") and key in st.secrets:
+            value = st.secrets[key]
+            if value is None:
+                return default
+            return str(value).strip()
+    except Exception:
+        pass
+
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return str(value).strip()
+
+def require_secret(key: str) -> str:
+    value = get_secret_value(key)
+    if not value:
+        st.error(f"필수 설정값 누락: {key}")
+        st.stop()
+    return value
 
 def hash_password(password: str, iterations: int = 240000) -> str:
     salt = secrets.token_bytes(16)
@@ -66,12 +85,14 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def require_login() -> bool:
-    stored_hash = os.getenv('APP_PASSWORD_HASH', '').strip()
+    password_hash = get_secret_value("APP_PASSWORD_HASH", "")
     if not stored_hash:
-        st.warning('APP_PASSWORD_HASH가 .env에 설정되지 않았습니다. 개발 단계에서는 로그인 없이 진행되지만, 배포 전 반드시 설정하십시오.')
-        return True
+        st.warning('APP_PASSWORD_HASH가 설정되지 않았습니다. Streamlit Cloud의 Secrets를 확인하십시오.')
+        st.stop()
+        
     if st.session_state.get('authenticated'):
         return True
+        
     st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
     st.subheader('로그인')
     password = st.text_input('비밀번호', type='password', placeholder='앱 비밀번호 입력')
@@ -81,12 +102,10 @@ def require_login() -> bool:
         if verify_password(password, stored_hash):
             st.session_state['authenticated'] = True
             st.success('인증되었습니다.')
-            return True
-        st.error('비밀번호가 일치하지 않습니다.')
-        return False
+            st.rerun()
+        else:
+            st.error('비밀번호가 일치하지 않습니다.')
     st.stop()
-    return False
-
 
 def load_json_db(path: str) -> Dict:
     if not os.path.exists(path):
@@ -343,7 +362,7 @@ def fallback_summary(signals: Dict, target_departments: List[str], recs: List[Di
 
 
 def summarize_with_gemini(signals: Dict, target_departments: List[str], recs: List[Dict]) -> str:
-    api_key = os.getenv('GEMINI_API_KEY', '').strip()
+    api_key = get_secret_value("GEMINI_API_KEY")
     if not api_key or genai is None:
         return fallback_summary(signals, target_departments, recs)
     try:
