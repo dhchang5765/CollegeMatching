@@ -17,7 +17,7 @@ except Exception:
 
 
 GEMINI_MODEL = "gemini-3-flash"
-JSON_DB_PATH = "merged_university_db.json"
+JSON_DB_PATH = "merged_university_db_v2.json"
 
 CATEGORY_KEYWORDS = {
     "인문": ["국어", "문학", "언어", "역사", "철학", "독해", "비평", "서사", "글쓰기", "윤리", "고전"],
