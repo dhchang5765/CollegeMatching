@@ -30088,7 +30088,13 @@
       "talent_keywords": [
         "첨성",
         "긍지",
-        "봉사"
+        "봉사",
+        "약학",
+        "화학",
+        "생명과학",
+        "의약품",
+        "정밀성",
+        "환자안전"
       ],
       "major_categories": {
         "인문": [
@@ -30104,6 +30110,9 @@
           "치의예과",
           "수의예과",
           "간호학과"
+        ],
+        "약학": [
+          "약학과"
         ]
       },
       "selectivity_band": "mid",
@@ -30111,8 +30120,8 @@
       "data_quality": {
         "talent_keywords_present": true,
         "notes_present": false,
-        "departments_count": 8,
-        "major_category_count": 3,
+        "departments_count": 9,
+        "major_category_count": 4,
         "verification_status": "needs_review"
       },
       "departments": [
@@ -30520,13 +30529,88 @@
             }
           ],
           "evidence_level": "estimated"
+        },
+        {
+          "name": "약학과",
+          "category": "약학",
+          "campus": "대구/상주",
+          "aliases": [
+            "약학",
+            "약대",
+            "pharmacy"
+          ],
+          "fit_cluster": "pharmacy_healthcare",
+          "admissions": [
+            {
+              "type": "학생부종합",
+              "track_name": "종합 일반 추정",
+              "subject_weights": {
+                "국어": 0.15,
+                "영어": 0.2,
+                "수학": 0.3,
+                "과학": 0.35
+              },
+              "grade_band": {
+                "high": 1.2,
+                "mid": 1.8,
+                "safe": 2.4
+              },
+              "notes": "약학계열 일반 추정치, 대학별 모집요강 재검증 필요"
+            },
+            {
+              "type": "학생부교과",
+              "track_name": "교과 일반 추정",
+              "subject_weights": {
+                "국어": 0.15,
+                "영어": 0.2,
+                "수학": 0.3,
+                "과학": 0.35
+              },
+              "grade_band": {
+                "high": 1.4,
+                "mid": 2.0,
+                "safe": 2.7
+              },
+              "notes": "약학계열 교과 일반 추정치, 대학별 수능최저 재검증 필요"
+            }
+          ]
         }
       ],
       "source_trace": {
         "origin": "merged_university_db.json",
         "evidence_level": "mixed",
         "last_verified": "2026-05-12"
-      }
+      },
+      "majorCategories": {
+        "인문": [
+          "국어국문학",
+          "철학"
+        ],
+        "공학": [
+          "전자공학부",
+          "모빌리티공학"
+        ],
+        "의학": [
+          "의예과",
+          "치의예과",
+          "수의예과",
+          "간호학과"
+        ],
+        "약학": [
+          "약학과"
+        ]
+      },
+      "talentKeywords": [
+        "첨성",
+        "긍지",
+        "봉사",
+        "약학",
+        "화학",
+        "생명과학",
+        "의약품",
+        "정밀성",
+        "환자안전"
+      ]
     },
     {
       "name": "부산대학교",
@@ -32825,11 +32909,21 @@
       "region": "경북",
       "type": "4년제",
       "campus": null,
-      "talent_keywords": [],
+      "talent_keywords": [
+        "약학",
+        "화학",
+        "생명과학",
+        "의약품",
+        "정밀성",
+        "환자안전"
+      ],
       "major_categories": {
         "의학": [
           "의예과",
           "간호학과"
+        ],
+        "약학": [
+          "약학과"
         ]
       },
       "selectivity_band": "mid",
@@ -32837,8 +32931,8 @@
       "data_quality": {
         "talent_keywords_present": false,
         "notes_present": false,
-        "departments_count": 2,
-        "major_category_count": 1,
+        "departments_count": 3,
+        "major_category_count": 2,
         "verification_status": "needs_review"
       },
       "departments": [
@@ -32942,13 +33036,75 @@
             }
           ],
           "evidence_level": "estimated"
+        },
+        {
+          "name": "약학과",
+          "category": "약학",
+          "campus": null,
+          "aliases": [
+            "약학",
+            "약대",
+            "pharmacy"
+          ],
+          "fit_cluster": "pharmacy_healthcare",
+          "admissions": [
+            {
+              "type": "학생부종합",
+              "track_name": "종합 일반 추정",
+              "subject_weights": {
+                "국어": 0.15,
+                "영어": 0.2,
+                "수학": 0.3,
+                "과학": 0.35
+              },
+              "grade_band": {
+                "high": 1.2,
+                "mid": 1.8,
+                "safe": 2.4
+              },
+              "notes": "약학계열 일반 추정치, 대학별 모집요강 재검증 필요"
+            },
+            {
+              "type": "학생부교과",
+              "track_name": "교과 일반 추정",
+              "subject_weights": {
+                "국어": 0.15,
+                "영어": 0.2,
+                "수학": 0.3,
+                "과학": 0.35
+              },
+              "grade_band": {
+                "high": 1.4,
+                "mid": 2.0,
+                "safe": 2.7
+              },
+              "notes": "약학계열 교과 일반 추정치, 대학별 수능최저 재검증 필요"
+            }
+          ]
         }
       ],
       "source_trace": {
         "origin": "merged_university_db.json",
         "evidence_level": "mixed",
         "last_verified": "2026-05-12"
-      }
+      },
+      "majorCategories": {
+        "의학": [
+          "의예과",
+          "간호학과"
+        ],
+        "약학": [
+          "약학과"
+        ]
+      },
+      "talentKeywords": [
+        "약학",
+        "화학",
+        "생명과학",
+        "의약품",
+        "정밀성",
+        "환자안전"
+      ]
     },
     {
       "name": "계명대학교",
