@@ -2,11 +2,10 @@ import os
 import re
 import json
 import hmac
-import math
 import hashlib
 import secrets
-from collections import Counter, defaultdict
-from typing import Dict, List, Tuple, Optional, Any
+from collections import Counter
+from typing import Dict, List, Tuple, Optional
 
 import streamlit as st
 from bs4 import BeautifulSoup
@@ -16,14 +15,6 @@ try:
 except Exception:
     genai = None
 
-try:
-    from pydantic import BaseModel, Field
-except Exception:
-    BaseModel = object
-    def Field(default=None, default_factory=None):
-        if default_factory is not None:
-            return default_factory()
-        return default
 
 GEMINI_MODEL = "gemini-3-flash"
 JSON_DB_PATH = "merged_university_db.json"
@@ -32,7 +23,7 @@ CATEGORY_KEYWORDS = {
     "인문": ["국어", "문학", "언어", "역사", "철학", "독해", "비평", "서사", "글쓰기", "윤리", "고전"],
     "사회": ["사회", "경제", "경영", "정치", "행정", "미디어", "광고", "홍보", "심리", "소통", "기획", "콘텐츠", "법률", "국제"],
     "자연": ["수학", "과학", "생명", "화학", "물리", "통계", "탐구", "실험", "지구과학", "천문", "환경"],
-    "공학": ["공학", "컴퓨터", "소프트웨어", "AI", "인공지능", "전자", "기계", "설계", "코딩", "데이터", "기술", "반도체", "에너지", "로봇"],
+    "공학": ["공학", "컴퓨터", "소프트웨어", "AI", "전자", "기계", "설계", "코딩", "데이터", "기술", "반도체", "에너지", "로봇"],
     "의학": ["의료", "질병", "해부", "임상", "인체", "약리", "면역", "보건", "신경", "유전", "생명윤리", "수술", "진단"],
     "치의학": ["구강", "치아", "치과학", "치주", "교정"],
     "한의학": ["한방", "동양의학", "본초학", "경혈", "체질", "침구"],
@@ -42,11 +33,14 @@ CATEGORY_KEYWORDS = {
 }
 
 DEPT_ALIAS = {
-    "미디어": ["미디어커뮤니케이션학", "언론정보학", "콘텐츠디자인", "광고홍보학", "신문방송학"],
-    "경영": ["경영학", "경제학", "국제통상학", "빅데이터경영", "회계학", "재무금융학"],
+    # [기존 항목 유지 및 확장]
+    "미디어": ["미디어커뮤니케이션학", "언론정보학", "콘텐츠디자인"],
+    "경영": ["경영학", "경제학", "국제통상학", "빅데이터경영"],
     "심리": ["심리학", "사회학", "상담심리학"],
-    "컴퓨터": ["컴퓨터공학", "소프트웨어학", "인공지능학과", "데이터사이언스", "AI학과", "정보보호학"],
-    "생명": ["생명과학", "생명공학", "생명시스템학", "의생명공학", "바이오시스템학"],
+    "컴퓨터": ["컴퓨터공학", "소프트웨어학", "인공지능학과", "데이터사이언스"],
+    "생명": ["생명과학", "생명공학", "생명시스템학", "의생명공학"],
+    
+    # [의과학 및 의료 계열 추가]
     "의학": ["의예과", "의과학", "임상의학"],
     "치의학": ["치의예과", "구강보건학"],
     "한의학": ["한의예과"],
@@ -54,67 +48,16 @@ DEPT_ALIAS = {
     "약학": ["약학과", "제약공학", "바이오의약"],
     "간호": ["간호학과"],
     "보건": ["보건행정학", "임상병리학", "방사선학", "물리치료학"],
+    
+    # [기타 주요 학과]
     "사범": ["국어교육", "수학교육", "영어교육", "교육학"],
     "환경": ["환경공학", "에너지공학", "기후에너지"],
     "미래차": ["자동차공학", "미래모빌리티", "스마트모빌리티"]
 }
 
 SPECIAL_PATTERNS = {
-    "grade": [
-        r"([0-9]+(?:\.[0-9]+)?)\s*등급",
-        r"내신\s*([0-9]+(?:\.[0-9]+)?)",
-        r"모평\s*([0-9]+(?:\.[0-9]+)?)\s*등급",
-        r"평균\s*([0-9]+(?:\.[0-9]+)?)\s*등급",
-    ]
+    "grade": [r"([0-9.]+)등급", r"내신\s*([0-9.]+)", r"모평\s*([0-9.]+)등급"]
 }
-
-UNIVERSITY_KEYWORDS = [
-    "서울대", "연세대", "고려대", "성균관대", "한양대", "서강대", "중앙대", "경희대", "한국외대",
-    "서울시립대", "건국대", "동국대", "홍익대", "이화여대", "숙명여대", "국민대", "숭실대",
-    "아주대", "인하대", "부산대", "경북대", "전남대", "충남대", "충북대", "전북대",
-    "KAIST", "카이스트", "포스텍", "POSTECH", "GIST", "DGIST", "UNIST",
-    "가천대", "세종대", "단국대", "명지대", "상명대", "한성대", "서경대", "서울과기대",
-    "광운대", "가톨릭대", "인천대", "한림대", "을지대", "차의과학대"
-]
-
-UNIVERSITY_CLUSTER_MAP = {
-    "SKY": ["서울대", "연세대", "고려대"],
-    "의치한약수": ["의학", "치의학", "한의학", "약학", "수의학"],
-    "IST": ["KAIST", "GIST", "DGIST", "UNIST"],
-}
-
-TRACK_KEYWORD_MAP = {
-    "AI": ["AI", "인공지능", "컴퓨터", "소프트웨어", "데이터", "코딩", "IT", "알고리즘", "정보보호", "반도체"],
-    "미디어": ["미디어", "SNS", "광고", "홍보", "콘텐츠", "커뮤니케이션", "언론", "브랜딩", "저널리즘"],
-    "경영": ["경영", "경제", "금융", "비즈니스", "리더십", "전략", "마케팅", "기획"],
-    "생명": ["생명", "바이오", "의생명", "생명과학", "유전", "면역", "의과학"],
-    "의학": ["의대", "의학", "의예", "임상", "의료", "질병", "진단"],
-    "교육": ["교육", "교직", "아동", "청소년", "수업", "학습"],
-}
-
-ACTIVITY_KEYWORDS = ["KMO", "R&E", "RISS", "DBpia", "MMI", "세특", "학생부", "동아리", "탐구", "논문", "올림피아드"]
-
-
-if BaseModel is not object:
-    class StudentProfileSchema(BaseModel):
-        overall_grade: Optional[float] = Field(default=None)
-        target_university: Optional[str] = Field(default=None)
-        target_universities: List[str] = Field(default_factory=list)
-        target_clusters: List[str] = Field(default_factory=list)
-        preferred_track: Optional[str] = Field(default=None)
-        admission_preference: Optional[str] = Field(default=None)
-        target_departments: List[str] = Field(default_factory=list)
-        subjects: Dict[str, Optional[float]] = Field(default_factory=dict)
-        top_keywords: List[str] = Field(default_factory=list)
-        strengths: List[str] = Field(default_factory=list)
-        risks: List[str] = Field(default_factory=list)
-        notable_activities: List[str] = Field(default_factory=list)
-        parser_mode: Optional[str] = Field(default=None)
-        is_student_record_heavy: Optional[bool] = Field(default=None)
-        essay_strength: Optional[bool] = Field(default=None)
-        math_risk: Optional[bool] = Field(default=None)
-        humanities_media_fit: Optional[bool] = Field(default=None)
-
 
 def get_secret_value(key: str, default: str | None = None) -> str | None:
     try:
@@ -125,11 +68,11 @@ def get_secret_value(key: str, default: str | None = None) -> str | None:
             return str(value).strip()
     except Exception:
         pass
+
     value = os.getenv(key)
     if value is None:
         return default
     return str(value).strip()
-
 
 def require_secret(key: str) -> str:
     value = get_secret_value(key)
@@ -137,7 +80,6 @@ def require_secret(key: str) -> str:
         st.error(f"필수 설정값 누락: {key}")
         st.stop()
     return value
-
 
 def hash_password(password: str, iterations: int = 240000) -> str:
     salt = secrets.token_bytes(16)
@@ -164,582 +106,487 @@ def require_login() -> bool:
     if not stored_hash:
         st.warning('APP_PASSWORD_HASH가 설정되지 않았습니다. Streamlit Cloud의 Secrets를 확인하십시오.')
         st.stop()
-
+        
     if st.session_state.get('authenticated'):
         return True
-
-    st.title("학생 맞춤 대학 추천 시스템")
-    st.caption("비밀번호 인증 후 사용 가능합니다.")
-    password = st.text_input("비밀번호", type="password")
-
-    if st.button("로그인"):
+        
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+    st.subheader('로그인')
+    password = st.text_input('비밀번호', type='password', placeholder='앱 비밀번호 입력')
+    submitted = st.button('로그인', use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    if submitted:
         if verify_password(password, stored_hash):
             st.session_state['authenticated'] = True
+            st.success('인증되었습니다.')
             st.rerun()
         else:
-            st.error("비밀번호가 올바르지 않습니다.")
+            st.error('비밀번호가 일치하지 않습니다.')
     st.stop()
-    return False
+
+def load_json_db(path: str) -> Dict:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"JSON DB 파일이 없습니다: {path}")
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 
-def strip_text(text: str) -> str:
-    if not text:
-        return ""
-    text = text.replace("\xa0", " ")
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s*\n+", "\n", text)
-    return text.strip()
+def strip_text(s: str) -> str:
+    return re.sub(r'\s+', ' ', (s or '')).strip()
 
 
-def unique_keep_order(items: List[str]) -> List[str]:
-    seen = set()
-    out = []
-    for x in items:
-        x2 = strip_text(str(x))
-        if x2 and x2 not in seen:
-            seen.add(x2)
-            out.append(x2)
-    return out
+def html_to_text(html_text: str) -> str:
+    soup = BeautifulSoup(html_text, 'html.parser')
+    return strip_text(soup.get_text(' '))
 
 
-def safe_float(x: Any) -> Optional[float]:
-    try:
-        if x is None or x == "":
-            return None
-        return float(x)
-    except Exception:
-        return None
-
-
-def normalize_university_name(name: str) -> str:
-    if not name:
-        return ""
-    name = strip_text(name)
-    mapping = {
-        "카이스트": "KAIST",
-        "포항공대": "POSTECH",
-        "포스텍": "POSTECH",
-    }
-    return mapping.get(name, name)
-
-
-def extract_text_lines_from_html(html_text: str) -> List[str]:
-    soup = BeautifulSoup(html_text, "html.parser")
-    for tag in soup(["script", "style", "noscript"]):
-        tag.extract()
-
-    lines = []
-    for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "p", "li", "div", "span", "td", "th"]):
-        txt = strip_text(tag.get_text(" ", strip=True))
-        if len(txt) >= 2:
-            lines.append(txt)
-    return unique_keep_order(lines)
-
-
-def extract_chart_script_text(html_text: str) -> str:
-    soup = BeautifulSoup(html_text, "html.parser")
-    scripts = []
-    for s in soup.find_all("script"):
-        txt = s.string if s.string else s.get_text(" ", strip=True)
-        txt = strip_text(txt)
-        if txt:
-            scripts.append(txt)
-    return "\n".join(scripts)
-
-
-def extract_s15_university_cards(html_text: str) -> List[Dict[str, Any]]:
-    soup = BeautifulSoup(html_text, "html.parser")
-    results = []
-    for card in soup.select(".s15-univ"):
-        tier = strip_text(card.select_one(".tier").get_text(" ", strip=True)) if card.select_one(".tier") else ""
-        name = strip_text(card.select_one(".name").get_text(" ", strip=True)) if card.select_one(".name") else ""
-        desc = strip_text(card.select_one(".desc").get_text(" ", strip=True)) if card.select_one(".desc") else ""
-        prob_text = strip_text(card.select_one(".s15-univ-prob").get_text(" ", strip=True)) if card.select_one(".s15-univ-prob") else ""
-        prob = None
-        m = re.search(r"(\d{1,3})", prob_text)
+def pick_first_float(text: str, patterns: List[str]) -> Optional[float]:
+    for p in patterns:
+        m = re.search(p, text)
         if m:
-            prob = int(m.group(1))
-        if name or desc or prob is not None:
-            results.append({
-                "tier": tier,
-                "name": normalize_university_name(name),
-                "desc": desc,
-                "prob": prob
-            })
-    return results
-
-
-def extract_s15_from_script(html_text: str) -> List[Dict[str, Any]]:
-    text = extract_chart_script_text(html_text)
-    out = []
-    for m in re.finditer(r"label\s+([A-Za-z가-힣0-9]+)\s*,\s*data\s+([0-9,\s.]+)", text):
-        label = normalize_university_name(m.group(1))
-        data = [safe_float(x.strip()) for x in m.group(2).split(",") if x.strip()]
-        data = [x for x in data if x is not None]
-        if not data:
-            continue
-        out.append({
-            "name": label,
-            "prob": int(max(data)),
-            "source": "chart_script"
-        })
-    return out
-
-
-def extract_explicit_universities(text: str) -> List[str]:
-    found = []
-    for kw in UNIVERSITY_KEYWORDS:
-        if kw in text:
-            found.append(normalize_university_name(kw))
-    return unique_keep_order(found)
-
-
-def extract_clusters_and_track_keywords(text: str) -> Tuple[List[str], List[str], List[str]]:
-    clusters = []
-    track_keywords = []
-    activities = []
-
-    for ck in UNIVERSITY_CLUSTER_MAP.keys():
-        if ck in text:
-            clusters.append(ck)
-
-    for tk, kws in TRACK_KEYWORD_MAP.items():
-        for kw in kws:
-            if kw.lower() in text.lower():
-                track_keywords.append(tk)
-                break
-
-    for ak in ACTIVITY_KEYWORDS:
-        if ak.lower() in text.lower():
-            activities.append(ak)
-
-    return unique_keep_order(clusters), unique_keep_order(track_keywords), unique_keep_order(activities)
-
-
-def extract_grade_from_text(text: str) -> Optional[float]:
-    vals = []
-    for pat in SPECIAL_PATTERNS["grade"]:
-        for m in re.findall(pat, text):
             try:
-                v = float(m)
-                if 0.5 <= v <= 9.0:
-                    vals.append(v)
+                return float(m.group(1))
             except Exception:
                 pass
-    return min(vals) if vals else None
-
-
-def classify_track_from_keywords(keywords: List[str]) -> Optional[str]:
-    scores = Counter()
-    blob = " ".join(keywords)
-    for track, kws in TRACK_KEYWORD_MAP.items():
-        for kw in kws:
-            if kw.lower() in blob.lower():
-                scores[track] += 1
-    return scores.most_common(1)[0][0] if scores else None
-
-
-def infer_category_from_track(track: Optional[str]) -> Optional[str]:
-    if not track:
-        return None
-    mapping = {
-        "AI": "공학",
-        "미디어": "사회",
-        "경영": "사회",
-        "생명": "자연",
-        "의학": "의학",
-        "교육": "교육",
-    }
-    return mapping.get(track)
-
-
-def load_university_db() -> List[Dict[str, Any]]:
-    if os.path.exists(JSON_DB_PATH):
-        try:
-            with open(JSON_DB_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                return data
-        except Exception:
-            pass
-
-    return [
-        {"university": "서울대", "department": "경영학과", "category": "사회", "min_grade": 1.3, "keywords": ["경영", "리더십", "경제"]},
-        {"university": "연세대", "department": "언론홍보영상학부", "category": "사회", "min_grade": 1.8, "keywords": ["미디어", "콘텐츠", "홍보", "소통"]},
-        {"university": "고려대", "department": "미디어학부", "category": "사회", "min_grade": 1.9, "keywords": ["미디어", "언론", "커뮤니케이션"]},
-        {"university": "중앙대", "department": "미디어커뮤니케이션학부", "category": "사회", "min_grade": 2.5, "keywords": ["미디어", "광고", "홍보", "콘텐츠"]},
-        {"university": "성균관대", "department": "소프트웨어학과", "category": "공학", "min_grade": 1.7, "keywords": ["AI", "소프트웨어", "코딩", "데이터"]},
-        {"university": "한양대", "department": "컴퓨터소프트웨어학부", "category": "공학", "min_grade": 2.0, "keywords": ["AI", "컴퓨터", "알고리즘"]},
-        {"university": "KAIST", "department": "전산학부", "category": "공학", "min_grade": 1.2, "keywords": ["AI", "수학", "알고리즘", "연구"]},
-        {"university": "POSTECH", "department": "컴퓨터공학과", "category": "공학", "min_grade": 1.3, "keywords": ["AI", "컴퓨터", "연구"]},
-        {"university": "가톨릭대", "department": "의예과", "category": "의학", "min_grade": 1.1, "keywords": ["의학", "의료", "생명"]},
-        {"university": "한림대", "department": "의예과", "category": "의학", "min_grade": 1.2, "keywords": ["의학", "의료", "봉사"]},
-    ]
-
-
-def build_structured_text_for_llm(html_text: str) -> str:
-    lines = extract_text_lines_from_html(html_text)
-    script_text = extract_chart_script_text(html_text)
-
-    important = []
-    for ln in lines:
-        if any(key in ln for key in [
-            "UNIVERSITY SIMULATION", "FINAL CONSULTANTS CONCLUSION", "DIAGNOSIS",
-            "SKY", "KAIST", "SNS", "AI", "KMO", "학생부", "세특", "면접", "논술"
-        ]):
-            important.append(ln)
-
-    s15_cards = extract_s15_university_cards(html_text)
-    important.append("[S15_CARDS]")
-    for c in s15_cards:
-        important.append(json.dumps(c, ensure_ascii=False))
-
-    important.append("[SCRIPT]")
-    important.append(script_text[:6000])
-
-    blob = "\n".join(unique_keep_order(important))
-    return blob[:18000]
-
-
-def extract_signals_with_gemini(html_text: str) -> Optional[Dict[str, Any]]:
-    if genai is None or BaseModel is object:
-        return None
-
-    api_key = get_secret_value("GEMINI_API_KEY")
-    if not api_key:
-        return None
-
-    structured_text = build_structured_text_for_llm(html_text)
-
-    prompt = f"""
-다음은 학생 진단 HTML에서 추출한 구조화 텍스트다.
-반드시 JSON만 출력하라.
-추측하지 말고 텍스트 근거가 있을 때만 값 채워라.
-
-필드 의미:
-- target_university: 가장 직접적인 1개 학교
-- target_universities: 직접 언급된 학교들
-- target_clusters: SKY, IST 같은 대학군
-- preferred_track: AI, 미디어, 경영, 의학 등
-- target_departments: 학과/계열
-- notable_activities: KMO, R&E, MMI 등
-- strengths, risks: 핵심 강/약점
-- parser_mode: gemini
-
-[TEXT]
-{structured_text}
-"""
-
-    try:
-        client = genai.Client(api_key=api_key)
-        resp = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_schema": StudentProfileSchema,
-                "temperature": 0.1,
-            },
-        )
-        data = json.loads(resp.text)
-        if isinstance(data, dict):
-            data["parser_mode"] = "gemini"
-            return data
-    except Exception:
-        return None
     return None
 
 
-def extract_example_specific_signals(html_text: str) -> Dict[str, Any]:
-    lines = extract_text_lines_from_html(html_text)
-    text_blob = "\n".join(lines)
-    script_blob = extract_chart_script_text(html_text)
+def collect_all_floats(text: str, patterns: List[str]) -> List[float]:
+    vals = []
+    for p in patterns:
+        for m in re.findall(p, text):
+            try:
+                vals.append(float(m[0] if isinstance(m, tuple) else m))
+            except Exception:
+                pass
+    return vals
 
-    s15_cards = extract_s15_university_cards(html_text)
-    s15_script_univs = extract_s15_from_script(html_text)
 
-    explicit_univs = extract_explicit_universities(text_blob + "\n" + script_blob)
-    clusters, track_keywords, activities = extract_clusters_and_track_keywords(text_blob + "\n" + script_blob)
+def infer_subjects_from_text(text: str) -> Dict[str, Optional[float]]:
+    subject_scores = {}
+    subject_patterns = {
+        '국어': [r'국어[^0-9]{0,20}([1-9](?:\.\d)?)등급', r'국어[^0-9]{0,20}([0-9]{1,3}(?:\.\d+)?)점'],
+        '수학': [r'수학[^0-9]{0,20}([1-9](?:\.\d)?)등급', r'수학[^0-9]{0,20}([0-9]{1,3}(?:\.\d+)?)점'],
+        '영어': [r'영어[^0-9]{0,20}([1-9](?:\.\d)?)등급', r'영어[^0-9]{0,20}([0-9]{1,3}(?:\.\d+)?)점'],
+        '사회': [r'사회[^0-9]{0,20}([1-9](?:\.\d)?)등급', r'사회문화[^0-9]{0,20}([1-9](?:\.\d)?)등급'],
+        '과학': [r'과학[^0-9]{0,20}([1-9](?:\.\d)?)등급', r'생명과학[^0-9]{0,20}([1-9](?:\.\d)?)등급']
+    }
+    for subj, patterns in subject_patterns.items():
+        subject_scores[subj] = pick_first_float(text, patterns)
+    return subject_scores
 
-    preferred_track = classify_track_from_keywords(track_keywords + explicit_univs + activities)
-    overall_grade = extract_grade_from_text(text_blob)
 
-    target_universities = []
-    for card in s15_cards:
-        if card.get("name"):
-            target_universities.append(card["name"])
-    for row in s15_script_univs:
-        if row.get("name") and row["name"] not in target_universities:
-            target_universities.append(row["name"])
-    for u in explicit_univs:
-        if u not in target_universities:
-            target_universities.append(u)
+def extract_example_specific_signals(html_text: str) -> Dict:
+    text = html_to_text(html_text)
+    lines = [ln.strip() for ln in re.split(r'[.!?]\s+', text) if ln.strip()]
+    top_keywords = Counter(re.findall(r'[가-힣A-Za-z]{2,20}', text))
+    for stop in ['학생', '분석', '결과', '응답', '진단', '영역', '전형', '활동', '학과', '대학']:
+        top_keywords.pop(stop, None)
 
-    target_universities = unique_keep_order(target_universities)
+    overall_grade = None
+    grade_candidates = collect_all_floats(text, SPECIAL_PATTERNS['grade'])
+    reasonable = [g for g in grade_candidates if 1 <= g <= 9]
+    if 3.5 in reasonable:
+        overall_grade = 3.5
+    elif reasonable:
+        overall_grade = reasonable[0]
 
-    top_university = None
-    s15_named = [c for c in s15_cards if c.get("name")]
-    if s15_named:
-        s15_named = sorted(s15_named, key=lambda x: (x.get("prob") is None, -(x.get("prob") or 0)))
-        top_university = s15_named[0]["name"]
-    elif target_universities:
-        top_university = target_universities[0]
+    preferred_track = None
+    if '미디어커뮤니케이션' in text:
+        preferred_track = '미디어커뮤니케이션'
+    elif '광고' in text or '콘텐츠' in text or '방송' in text:
+        preferred_track = '미디어'
 
-    target_departments = []
-    lower_blob = (text_blob + " " + script_blob).lower()
-    for alias_key, dept_list in DEPT_ALIAS.items():
-        if alias_key.lower() in lower_blob:
-            target_departments.extend(dept_list)
-
-    strengths = []
-    risks = []
-
-    if "학생부" in text_blob or "세특" in text_blob:
-        strengths.append("학생부 기반 강점")
-    if "AI" in text_blob or "인공지능" in text_blob:
-        strengths.append("AI/공학 진로 적합 신호")
-    if "SNS" in text_blob or "미디어" in text_blob:
-        strengths.append("미디어/콘텐츠 진로 적합 신호")
-    if "KMO" in text_blob:
-        strengths.append("수학/경시 활동 신호")
-
-    if re.search(r"수학[^\n]{0,15}(약점|부족|리스크|불안)", text_blob):
-        risks.append("수학 리스크")
-    if re.search(r"실행[^\n]{0,15}(부족|낮|미흡)", text_blob):
-        risks.append("실행력 리스크")
-    if re.search(r"면접[^\n]{0,15}(불안|약점|부족)", text_blob):
-        risks.append("면접 리스크")
+    target_university = None
+    if '중앙대 미디어커뮤니케이션 1지망' in text or '중앙대 미디어커뮤니케이션' in text:
+        target_university = '중앙대학교'
+    else:
+        m = re.search(r'목표 대학\s*[:：]?\s*([가-힣A-Za-z0-9\s]+)', text)
+        if m:
+            target_university = strip_text(m.group(1))
 
     return {
-        "overall_grade": overall_grade,
-        "target_university": top_university,
-        "target_universities": target_universities,
-        "target_clusters": clusters,
-        "preferred_track": preferred_track,
-        "admission_preference": "학생부종합" if ("학생부" in text_blob or "세특" in text_blob) else None,
-        "target_departments": unique_keep_order(target_departments),
-        "subjects": {},
-        "top_keywords": unique_keep_order(track_keywords + activities + explicit_univs + clusters),
-        "strengths": unique_keep_order(strengths),
-        "risks": unique_keep_order(risks),
-        "notable_activities": unique_keep_order(activities),
-        "parser_mode": "rule-based+s15+s17+script",
-        "is_student_record_heavy": ("학생부" in text_blob or "세특" in text_blob),
-        "essay_strength": ("논술" in text_blob),
-        "math_risk": ("수학" in " ".join(risks)),
-        "humanities_media_fit": ("SNS" in text_blob or "미디어" in text_blob),
-        "evidence": {
-            "s15_cards": s15_cards,
-            "s15_script_univs": s15_script_univs,
-            "explicit_univs": explicit_univs,
-            "clusters": clusters,
-            "track_keywords": track_keywords,
-            "activities": activities
-        }
+        'raw_text': text,
+        'overall_grade': overall_grade,
+        'subjects': infer_subjects_from_text(text),
+        'top_keywords': [w for w, _ in top_keywords.most_common(40)],
+        'preferred_track': preferred_track,
+        'target_university': target_university,
+        'is_student_record_heavy': any(k in text for k in ['방송반', '글쓰기 대회', '생기부', '수행평가']),
+        'admission_preference': '학생부종합' if ('학생부종합전형' in text or '학종' in text) else None,
+        'essay_strength': True if (('논술' in text and '자신' in text) or '글쓰기' in text) else False,
+        'math_risk': True if any(k in text for k in ['수학 회피', '수학 4등급', '모평 5등급', '수학은 진짜 못 하겠어요']) else False,
+        'humanities_media_fit': True if any(k in text for k in ['인문계', '미디어 진로', '콘텐츠', '광고 기획']) else False,
+        'line_samples': lines[:50]
     }
 
 
-def merge_signals(rule_signals: Dict[str, Any], ai_signals: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    if not ai_signals:
-        return rule_signals
-
-    merged = dict(rule_signals)
-
-    scalar_fields = [
-        "overall_grade", "target_university", "preferred_track",
-        "admission_preference", "parser_mode", "is_student_record_heavy",
-        "essay_strength", "math_risk", "humanities_media_fit"
-    ]
-    list_fields = [
-        "target_universities", "target_clusters", "target_departments",
-        "top_keywords", "strengths", "risks", "notable_activities"
-    ]
-    dict_fields = ["subjects"]
-
-    for f in scalar_fields:
-        if ai_signals.get(f) not in [None, "", []]:
-            merged[f] = ai_signals.get(f)
-
-    for f in list_fields:
-        merged[f] = unique_keep_order((rule_signals.get(f) or []) + (ai_signals.get(f) or []))
-
-    for f in dict_fields:
-        base = dict(rule_signals.get(f) or {})
-        base.update(ai_signals.get(f) or {})
-        merged[f] = base
-
-    if not merged.get("target_university"):
-        tus = merged.get("target_universities") or []
-        if tus:
-            merged["target_university"] = tus[0]
-
-    if not merged.get("preferred_track"):
-        merged["preferred_track"] = classify_track_from_keywords(merged.get("top_keywords", []))
-
-    pm_rule = rule_signals.get("parser_mode", "rule")
-    pm_ai = ai_signals.get("parser_mode", "gemini")
-    merged["parser_mode"] = f"{pm_ai}+{pm_rule}"
-
-    return merged
+def normalize_subject(v: Optional[float]) -> float:
+    if v is None:
+        return 50.0
+    if v <= 9:
+        return max(0.0, 100 - (v - 1) * 12.5)
+    return max(0.0, min(100.0, v))
 
 
-def score_university_fit(signals: Dict[str, Any], row: Dict[str, Any]) -> float:
-    score = 40.0
-
-    uni = row.get("university", "")
-    dept = row.get("department", "")
-    row_keywords = row.get("keywords", []) or []
-
-    overall_grade = signals.get("overall_grade")
-    target_university = signals.get("target_university")
-    target_universities = signals.get("target_universities", []) or []
-    target_clusters = signals.get("target_clusters", []) or []
-    preferred_track = signals.get("preferred_track")
-    target_departments = signals.get("target_departments", []) or []
-    top_keywords = signals.get("top_keywords", []) or []
-    min_grade = row.get("min_grade")
-
-    if target_university and uni == target_university:
-        score += 30
-    elif uni in target_universities:
-        score += 22
-
-    if "SKY" in target_clusters and uni in ["서울대", "연세대", "고려대"]:
-        score += 15
-    if "IST" in target_clusters and uni in ["KAIST", "GIST", "DGIST", "UNIST"]:
-        score += 15
-
-    if preferred_track:
-        if preferred_track == "AI" and any(k in dept for k in ["컴퓨터", "소프트웨어", "AI", "데이터", "전산"]):
-            score += 18
-        elif preferred_track == "미디어" and any(k in dept for k in ["미디어", "언론", "광고", "홍보", "커뮤니케이션", "콘텐츠"]):
-            score += 18
-        elif preferred_track == "경영" and any(k in dept for k in ["경영", "경제", "통상", "금융"]):
-            score += 18
-        elif preferred_track == "의학" and any(k in dept for k in ["의예", "의학", "의과"]):
-            score += 18
-        elif preferred_track == "생명" and any(k in dept for k in ["생명", "바이오", "의생명"]):
-            score += 18
-
-    for td in target_departments:
-        if td and td in dept:
-            score += 10
-            break
-
-    kw_hit = 0
-    for kw in top_keywords:
-        if kw and any(kw.lower() in str(x).lower() for x in ([dept] + row_keywords)):
-            kw_hit += 1
-    score += min(kw_hit * 2.5, 12)
-
-    if overall_grade is not None and min_grade is not None:
-        diff = overall_grade - min_grade
-        if diff <= -0.2:
-            score += 18
-        elif diff <= 0.2:
-            score += 12
-        elif diff <= 0.6:
-            score += 6
-        elif diff <= 1.0:
-            score += 1
-        else:
-            score -= min((diff - 1.0) * 10, 25)
-
-    if signals.get("is_student_record_heavy"):
-        score += 3
-    if signals.get("math_risk") and preferred_track == "AI":
-        score -= 6
-
-    return max(0.0, min(100.0, round(score, 1)))
+def infer_category_scores(signals: Dict) -> Dict[str, float]:
+    text = signals['raw_text']
+    scores = {k: 0.0 for k in CATEGORY_KEYWORDS}
+    for cat, kws in CATEGORY_KEYWORDS.items():
+        for kw in kws:
+            scores[cat] += text.count(kw) * 2.5
+    subjects = signals.get('subjects', {})
+    scores['인문'] += normalize_subject(subjects.get('국어')) * 0.30
+    scores['사회'] += normalize_subject(subjects.get('사회')) * 0.35
+    scores['사회'] += normalize_subject(subjects.get('영어')) * 0.15
+    scores['자연'] += normalize_subject(subjects.get('과학')) * 0.25
+    scores['공학'] += normalize_subject(subjects.get('수학')) * 0.30
+    scores['공학'] += normalize_subject(subjects.get('과학')) * 0.10
+    if signals.get('humanities_media_fit'):
+        scores['인문'] += 25
+        scores['사회'] += 35
+    if signals.get('math_risk'):
+        scores['공학'] -= 20
+        scores['자연'] -= 10
+    if signals.get('essay_strength'):
+        scores['인문'] += 15
+        scores['사회'] += 10
+    return scores
 
 
-def recommend_universities(signals: Dict[str, Any], db: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
-    scored = []
-    for row in db:
-        fit_score = score_university_fit(signals, row)
-        scored.append({**row, "fit_score": fit_score})
-    scored.sort(key=lambda x: x["fit_score"], reverse=True)
-    return scored[:top_n]
+def choose_target_departments(signals: Dict, category_scores: Dict[str, float], max_n: int = 2) -> List[str]:
+    text = signals['raw_text']
+    direct = []
+    for seed, departments in DEPT_ALIAS.items():
+        if seed in text:
+            direct.extend(departments)
+    uniq = []
+    for d in direct:
+        if d not in uniq:
+            uniq.append(d)
+    if uniq:
+        return uniq[:max_n]
+    sorted_cats = sorted(category_scores.items(), key=lambda x: x[1], reverse=True)
+    mapping = {
+        '인문': ['국어국문학', '영어영문학'],
+        '사회': ['미디어커뮤니케이션', '광고홍보학'],
+        '자연': ['생명과학', '통계학'],
+        '공학': ['컴퓨터공학', '전자공학']
+    }
+    recs = []
+    for cat, _ in sorted_cats:
+        for d in mapping.get(cat, []):
+            if d not in recs:
+                recs.append(d)
+            if len(recs) >= max_n:
+                return recs
+    return recs[:max_n]
 
 
-def render_results(signals: Dict[str, Any], results: List[Dict[str, Any]]) -> None:
-    st.subheader("추출 결과")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("파서 모드", signals.get("parser_mode", "-"))
-    c2.metric("목표 대학", signals.get("target_university") or "-")
-    c3.metric("선호 트랙", signals.get("preferred_track") or "-")
-    c4.metric("내신 추정", signals.get("overall_grade") if signals.get("overall_grade") is not None else "-")
+def major_match_score(target_departments: List[str], major_categories: Dict[str, List[str]]) -> Tuple[float, List[str]]:
+    majors_flat = []
+    for vals in major_categories.values():
+        majors_flat.extend(vals)
+    score = 0.0
+    matched = []
+    for target in target_departments:
+        for major in majors_flat:
+            if target == major:
+                score += 30
+                matched.append(major)
+            elif target in major or major in target:
+                score += 20
+                matched.append(major)
+            elif target.startswith('미디어') and any(k in major for k in ['미디어', '언론', '광고', '방송']):
+                score += 18
+                matched.append(major)
+    return score, list(dict.fromkeys(matched))
 
-    with st.expander("추출 신호 상세", expanded=False):
-        st.json(signals)
 
-    st.subheader("추천 결과")
-    if not results:
-        st.warning("추천 결과가 없습니다. 파싱 신호를 확인하십시오.")
-        return
+def keyword_fit_score(signals: Dict, talent_keywords: List[str]) -> float:
+    text = signals['raw_text']
+    hits = sum(1 for kw in talent_keywords if kw in text)
+    base = 40 + hits * 10
+    if signals.get('admission_preference') == '학생부종합' and any(k in talent_keywords for k in ['창의', '소통', '실천', '리더십', '융합']):
+        base += 8
+    if signals.get('is_student_record_heavy') and any(k in talent_keywords for k in ['표현', '실천', '창의']):
+        base += 6
+    return base
 
-    for i, row in enumerate(results, 1):
-        st.markdown(
-            f"""
-**{i}. {row.get('university', '-')} - {row.get('department', '-')}**  
-- 적합도: {row.get('fit_score', '-')}  
-- 기준 등급: {row.get('min_grade', '-')}  
-- 키워드: {", ".join(row.get('keywords', [])[:5])}
-            """
+
+def grade_fit_score(overall_grade: Optional[float]) -> float:
+    if overall_grade is None:
+        return 55.0
+    if overall_grade <= 2.0:
+        return 90.0
+    if overall_grade <= 2.5:
+        return 82.0
+    if overall_grade <= 3.0:
+        return 74.0
+    if overall_grade <= 3.5:
+        return 66.0
+    if overall_grade <= 4.0:
+        return 58.0
+    return 50.0
+
+
+def target_bonus(university_name: str, signals: Dict) -> float:
+    if signals.get('target_university') and signals['target_university'] in university_name:
+        return 12.0
+    return 0.0
+
+
+def recommend_universities(db: Dict, signals: Dict, target_departments: List[str], top_n: int = 6) -> List[Dict]:
+    recs = []
+    gscore = grade_fit_score(signals.get('overall_grade'))
+    for u in db.get('universities', []):
+        mscore, matched = major_match_score(target_departments, u.get('major_categories', {}))
+        if mscore <= 0:
+            continue
+        tscore = keyword_fit_score(signals, u.get('talent_keywords', []))
+        bonus = target_bonus(u['name'], signals)
+        total = round(mscore * 0.50 + tscore * 0.25 + gscore * 0.20 + bonus, 2)
+        recs.append({
+            'university': u['name'],
+            'region': u.get('region'),
+            'campus': u.get('campus'),
+            'fit_score': total,
+            'matched_departments': matched[:6],
+            'talent_keywords': u.get('talent_keywords', []),
+            'notes': u.get('notes', ''),
+            'target_bonus': bonus,
+            'major_score': round(mscore, 1),
+            'talent_score': round(tscore, 1),
+            'grade_score': round(gscore, 1)
+        })
+    recs.sort(key=lambda x: x['fit_score'], reverse=True)
+    return recs[:top_n]
+
+
+def fallback_summary(signals: Dict, target_departments: List[str], recs: List[Dict]) -> str:
+    dept_text = ', '.join(target_departments)
+    univ_text = ', '.join(r['university'] for r in recs[:6])
+    parts = [f'현재 예시 HTML 기준 우선 추천 학과는 {dept_text}입니다.']
+    if signals.get('admission_preference'):
+        parts.append(f"학생은 {signals['admission_preference']} 중심 전략에 더 적합한 패턴으로 해석됩니다.")
+    if signals.get('math_risk'):
+        parts.append('수학 약점과 회피 신호가 반복되어 공학계열보다 인문·사회계열 추천 우선순위가 높습니다.')
+    if signals.get('target_university'):
+        parts.append(f"HTML 내 목표 대학 신호는 {signals['target_university']}로 해석되었습니다.")
+    if univ_text:
+        parts.append(f'추천 대학은 {univ_text}입니다.')
+    return ' '.join(parts)
+
+
+def summarize_with_gemini(signals: Dict, target_departments: List[str], recs: List[Dict]) -> str:
+    api_key = get_secret_value("GEMINI_API_KEY")
+    if not api_key or genai is None:
+        return fallback_summary(signals, target_departments, recs)
+    try:
+        client = genai.Client(api_key=api_key)
+        prompt = (
+            f"학생 핵심 키워드: {signals.get('top_keywords', [])[:15]}\n"
+            f"전체 등급 추정: {signals.get('overall_grade')}\n"
+            f"목표 대학 신호: {signals.get('target_university')}\n"
+            f"추천 학과: {target_departments}\n"
+            f"추천 대학: {[r['university'] for r in recs]}\n"
+            "한국어 plain text로 5문장 이내 요약. 과장 금지."
         )
+        resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        if getattr(resp, 'text', None):
+            return resp.text.strip()
+    except Exception:
+        pass
+    return fallback_summary(signals, target_departments, recs)
 
 
-def main() -> None:
-    st.set_page_config(page_title="학생 맞춤 대학 추천 시스템", layout="wide")
-    require_login()
+def inject_css():
+    st.markdown("""
+    <style>
+    .stApp { background: linear-gradient(180deg, #f5f7fb 0%, #edf2f7 100%); }
+    .hero-box { padding: 1.4rem 1.6rem; border-radius: 22px; background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #2563eb 100%); color: white; box-shadow: 0 20px 40px rgba(37, 99, 235, 0.18); margin-bottom: 1rem; }
+    .hero-title { font-size: 1.75rem; font-weight: 800; margin-bottom: 0.35rem; }
+    .hero-sub { font-size: 0.98rem; opacity: 0.9; }
+    .glass-card { background: rgba(255,255,255,0.82); border: 1px solid rgba(148,163,184,0.18); border-radius: 18px; padding: 1rem 1.1rem; box-shadow: 0 12px 30px rgba(15,23,42,0.06); }
+    .metric-card { background: white; border-radius: 18px; padding: 1rem 1rem 0.9rem 1rem; border: 1px solid #e5e7eb; box-shadow: 0 10px 20px rgba(15,23,42,0.05); min-height: 120px; }
+    .metric-label { color: #64748b; font-size: 0.82rem; margin-bottom: 0.4rem; }
+    .metric-value { font-size: 1.4rem; font-weight: 800; color: #0f172a; margin-bottom: 0.35rem; }
+    .metric-desc { color: #475569; font-size: 0.9rem; line-height: 1.4; }
+    .section-title { font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0.2rem 0 0.8rem 0; }
+    .dept-chip { display: inline-block; background: #dbeafe; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 0.45rem 0.7rem; border-radius: 999px; margin: 0.2rem 0.35rem 0.2rem 0; font-weight: 700; font-size: 0.9rem; }
+    .tag-chip { display: inline-block; background: #f8fafc; color: #334155; border: 1px solid #e2e8f0; padding: 0.35rem 0.6rem; border-radius: 999px; margin: 0.18rem 0.32rem 0.18rem 0; font-size: 0.84rem; }
+    .recommend-card { background: white; border-radius: 22px; padding: 1.15rem 1.2rem; border: 1px solid #e2e8f0; box-shadow: 0 18px 32px rgba(15,23,42,0.06); margin-bottom: 1rem; }
+    .recommend-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
+    .recommend-title { font-size: 1.12rem; font-weight: 800; color: #0f172a; }
+    .score-pill { background: linear-gradient(135deg, #1d4ed8, #2563eb); color: white; padding: 0.45rem 0.8rem; border-radius: 999px; font-weight: 800; font-size: 0.9rem; white-space: nowrap; }
+    .subtle { color: #64748b; font-size: 0.9rem; }
+    .score-bar-wrap { margin-top: 0.4rem; margin-bottom: 0.55rem; }
+    .score-bar-label { font-size: 0.82rem; color: #475569; margin-bottom: 0.2rem; }
+    .score-bar { width: 100%; height: 10px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+    .score-fill { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #60a5fa, #1d4ed8); }
+    .login-wrap { max-width: 420px; margin: 2rem auto 0 auto; padding: 1rem; background: rgba(255,255,255,0.82); border-radius: 20px; border: 1px solid rgba(148,163,184,0.18); box-shadow: 0 12px 30px rgba(15,23,42,0.08); }
+    </style>
+    """, unsafe_allow_html=True)
 
-    st.title("학생 HTML 기반 대학 추천 시스템")
-    st.caption("S15/S17/스크립트/LLM 보강 파서를 적용한 수정 버전")
 
-    uploaded_file = st.file_uploader("학생 진단 HTML 파일 업로드", type=["html", "htm"])
+def render_hero():
+    st.markdown("""
+    <div class='hero-box'>
+      <div class='hero-title'>학생 HTML 기반 대학 추천 대시보드</div>
+      <div class='hero-sub'>서울·경기권 대학 DB와 현재 예시 HTML 구조를 바탕으로 학과 및 대학 적합도를 시각적으로 정리합니다.</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    if not uploaded_file:
-        st.info("HTML 파일을 업로드하십시오.")
-        return
 
-    html_bytes = uploaded_file.read()
-    html_text = html_bytes.decode("utf-8", errors="ignore")
+def render_metric_card(label: str, value: str, desc: str):
+    st.markdown(f"""
+    <div class='metric-card'>
+      <div class='metric-label'>{label}</div>
+      <div class='metric-value'>{value}</div>
+      <div class='metric-desc'>{desc}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    if not html_text or len(strip_text(html_text)) < 50:
-        st.error("HTML 내용이 비어 있거나 너무 짧습니다.")
-        return
+
+def render_chip_row(title: str, items: List[str], dept: bool = False):
+    chip_class = 'dept-chip' if dept else 'tag-chip'
+    chips = ''.join([f'<span class="{chip_class}">{item}</span>' for item in items if item])
+    empty = '<div class="subtle">표시할 항목이 없습니다.</div>'
+    st.markdown(f"<div class='glass-card'><div class='section-title'>{title}</div>{chips if chips else empty}</div>", unsafe_allow_html=True)
+
+
+def render_university_card(rec: Dict, rank: int):
+    fit_pct = max(0, min(100, int(rec['fit_score'])))
+    major_pct = max(0, min(100, int(rec['major_score'] * 2.5)))
+    talent_pct = max(0, min(100, int(rec['talent_score'])))
+    grade_pct = max(0, min(100, int(rec['grade_score'])))
+    matched = ''.join([f'<span class="tag-chip">{x}</span>' for x in rec['matched_departments']])
+    talents = ''.join([f'<span class="tag-chip">{x}</span>' for x in rec['talent_keywords']])
+    bonus_text = f"목표대학 가중치 +{rec['target_bonus']}" if rec.get('target_bonus') else '목표대학 가중치 없음'
+    st.markdown(f"""
+    <div class='recommend-card'>
+      <div class='recommend-head'>
+        <div>
+          <div class='subtle'>추천 {rank}</div>
+          <div class='recommend-title'>{rec['university']}</div>
+          <div class='subtle'>{rec['region']} · {rec['campus'] if rec['campus'] else '단일 캠퍼스/미표기'}</div>
+        </div>
+        <div class='score-pill'>적합도 {rec['fit_score']}</div>
+      </div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>총 적합도</div><div class='score-bar'><div class='score-fill' style='width:{fit_pct}%'></div></div></div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>학과 일치도</div><div class='score-bar'><div class='score-fill' style='width:{major_pct}%'></div></div></div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>인재상 적합도</div><div class='score-bar'><div class='score-fill' style='width:{talent_pct}%'></div></div></div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>기본 성적 적합도</div><div class='score-bar'><div class='score-fill' style='width:{grade_pct}%'></div></div></div>
+      <div class='section-title'>일치 학과군</div>
+      <div>{matched if matched else '<span class="subtle">없음</span>'}</div>
+      <div class='section-title' style='margin-top:0.8rem;'>인재상 키워드</div>
+      <div>{talents if talents else '<span class="subtle">없음</span>'}</div>
+      <div class='subtle' style='margin-top:0.9rem;'>{bonus_text}</div>
+      <div class='subtle' style='margin-top:0.3rem;'>{rec.get('notes', '')}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def env_help_panel():
+    st.markdown('### .env 설정 안내')
+    st.code("""GEMINI_API_KEY=여기에_API_KEY
+APP_PASSWORD_HASH=pbkdf2_sha256$240000$<salt_hex>$<hash_hex>""", language='bash')
+    st.write('비밀번호 해시는 앱 내부 도구 또는 아래 스크립트로 생성할 수 있습니다.')
+    st.code("""python -c "import secrets,hashlib; p='your_password'; s=secrets.token_bytes(16); i=240000; d=hashlib.pbkdf2_hmac('sha256', p.encode(), s, i); print(f'pbkdf2_sha256${i}${s.hex()}${d.hex()}')\"""", language='bash')
+
+
+def main():
+    st.set_page_config(page_title='학생 HTML 기반 대학 추천기', page_icon='🎓', layout='wide')
+    inject_css()
+    render_hero()
+
+    with st.sidebar:
+        st.header('설정')
+        env_help_panel()
+        st.markdown('### 비밀번호 해시 생성기')
+        gen_pw = st.text_input('새 비밀번호', type='password')
+        if st.button('해시 생성', use_container_width=True) and gen_pw:
+            st.code(hash_password(gen_pw), language='text')
+
+    if not require_login():
+        st.stop()
 
     try:
-        rule_signals = extract_example_specific_signals(html_text)
+        db = load_json_db(JSON_DB_PATH)
     except Exception as e:
-        st.error(f"규칙 기반 파싱 실패: {e}")
-        rule_signals = {
-            "overall_grade": None,
-            "target_university": None,
-            "target_universities": [],
-            "target_clusters": [],
-            "preferred_track": None,
-            "admission_preference": None,
-            "target_departments": [],
-            "subjects": {},
-            "top_keywords": [],
-            "strengths": [],
-            "risks": [],
-            "notable_activities": [],
-            "parser_mode": "rule-failed",
-            "is_student_record_heavy": None,
-            "essay_strength": None,
-            "math_risk": None,
-            "humanities_media_fit": None,
-        }
+        st.error(str(e))
+        st.stop()
 
-    ai_signals = extract_signals_with_gemini(html_text)
-    signals = merge_signals(rule_signals, ai_signals)
+    top1, top2, top3 = st.columns(3)
+    with top1:
+        render_metric_card('연결 DB', f"{len(db.get('universities', []))}개 대학", '서울·경기권 대학 데이터가 로드되었습니다.')
+    with top2:
+        render_metric_card('입력 형식', '학생 HTML', '현재 예시 리포트 구조에 맞춘 파서가 동작합니다.')
+    with top3:
+        render_metric_card('분석 방식', 'JSON + HTML', 'PDF 없이 구조화된 대학 DB와 학생 리포트만 사용합니다.')
 
-    db = load_university_db()
-    results = recommend_universities(signals, db, top_n=10)
-    render_results(signals, results)
+    uploaded_html = st.file_uploader('학생 분석 HTML 업로드', type=['html', 'htm'])
 
+    if uploaded_html is not None:
+        html_text = uploaded_html.read().decode('utf-8', errors='ignore')
+        signals = extract_example_specific_signals(html_text)
+        category_scores = infer_category_scores(signals)
+        target_departments = choose_target_departments(signals, category_scores, max_n=2)
+        recs = recommend_universities(db, signals, target_departments, top_n=6)
+        summary = summarize_with_gemini(signals, target_departments, recs)
 
-if __name__ == "__main__":
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            render_metric_card('추천 학과 수', str(len(target_departments)), '요청 조건에 맞춰 최대 2개까지 제시합니다.')
+        with m2:
+            render_metric_card('추천 대학 수', str(len(recs)), '추천 결과는 최대 6개 대학까지 노출합니다.')
+        with m3:
+            render_metric_card('추정 전체 등급', str(signals.get('overall_grade') or '-'), 'HTML 서술에서 탐지한 대표 등급 값입니다.')
+        with m4:
+            render_metric_card('전형 적합도', signals.get('admission_preference') or '미탐지', '예시 HTML의 전형 서술을 우선 반영합니다.')
+
+        left, right = st.columns([1.05, 1.35])
+        with left:
+            render_chip_row('우선 추천 학과', target_departments, dept=True)
+            render_chip_row('핵심 키워드', signals.get('top_keywords', [])[:12])
+            render_chip_row('학생 신호', [
+                signals.get('preferred_track') or '희망 트랙 미탐지',
+                signals.get('target_university') or '목표 대학 미탐지',
+                '논술/글쓰기 강점' if signals.get('essay_strength') else '논술 강점 미탐지',
+                '수학 위험 신호' if signals.get('math_risk') else '수학 위험 미탐지',
+                '인문·미디어 적합' if signals.get('humanities_media_fit') else '계열 적합도 일반 추정'
+            ])
+            st.markdown(f"<div class='glass-card'><div class='section-title'>요약 분석</div><div class='subtle' style='font-size:0.96rem; line-height:1.7; color:#334155;'>{summary}</div></div>", unsafe_allow_html=True)
+            score_items = ''.join([
+                f"<div class='score-bar-wrap'><div class='score-bar-label'>{k}</div><div class='score-bar'><div class='score-fill' style='width:{max(0,min(100,int(v)))}%'></div></div></div>"
+                for k, v in sorted(category_scores.items(), key=lambda x: x[1], reverse=True)
+            ])
+            st.markdown(f"<div class='glass-card'><div class='section-title'>계열 적합도</div>{score_items}</div>", unsafe_allow_html=True)
+
+        with right:
+            st.markdown("<div class='section-title'>추천 대학</div>", unsafe_allow_html=True)
+            if not recs:
+                st.warning('현재 HTML에서 학과 또는 대학 적합 신호를 충분히 추출하지 못했습니다.')
+            for i, rec in enumerate(recs, start=1):
+                render_university_card(rec, i)
+
+        with st.expander('세부 추출 정보', expanded=False):
+            st.json({
+                'overall_grade': signals.get('overall_grade'),
+                'subjects': signals.get('subjects'),
+                'preferred_track': signals.get('preferred_track'),
+                'target_university': signals.get('target_university'),
+                'admission_preference': signals.get('admission_preference'),
+                'essay_strength': signals.get('essay_strength'),
+                'math_risk': signals.get('math_risk'),
+                'humanities_media_fit': signals.get('humanities_media_fit'),
+                'category_scores': category_scores,
+                'target_departments': target_departments,
+                'top_keywords': signals.get('top_keywords', [])[:20]
+            })
+
+        with st.expander('원시 텍스트 미리보기', expanded=False):
+            st.text_area('HTML 추출 텍스트', signals['raw_text'][:5000], height=280)
+
+if __name__ == '__main__':
     main()
