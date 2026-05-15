@@ -29,9 +29,16 @@ your-repo/
 ### 파일 별 기능
 
 app.py - 메인 실행 함수
+
 university_db.json - 대학 데이터 json
+
 constants.py - 상수 저장
+
 extractHTML.py - HTML 파싱 함수
+
 password.py - 로그인 관련
+
 renderUI.py - UI 관련
+
 utils.py - 유틸리티
+
