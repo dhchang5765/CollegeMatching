@@ -15,8 +15,6 @@ from extractHTML import *
 from utils import *
 from password import *
 from renderUI import *
-from dotenv import load_dotenv
-load_dotenv()  # .env 파일을 환경변수로 로드
 
 def parse_grade_band(s: str) -> Tuple[Optional[float], Optional[float]]:
     if not s:
@@ -135,20 +133,18 @@ def extract_example_specific_signals(html_text: str) -> Dict:
     for c in final_conclusion.get("cards", []):
         focused_chunks.append(c.get("body", ""))
     focused_text = " ".join(ch for ch in focused_chunks if ch)
-    
-    # 3) 전체 텍스트에서 핵심 키워드 수집
+
+    # 3) 상위 키워드는 focused_text 기반 - Kiwi 형태소 분석 사용
     text_for_keywords = focused_text if focused_text.strip() else raw_text
     lines = [ln.strip() for ln in re.split(r"[.!?]", text_for_keywords) if ln.strip()]
-    topkeywords = Counter(re.findall(r"[A-Za-z가-힣]{2,20}", text_for_keywords))
-    for stop in STOPWORDS:
-        topkeywords.pop(stop, None)
-    # 추가: 2~3자 영어 약어 중 의미 없는 것 제거
-    for key in list(topkeywords.keys()):
-        if re.fullmatch(r"[A-Z]{1,3}", key):  # 1~3자 대문자만으로 된 토큰 제거
-            topkeywords.pop(key, None)
-    
 
-    # 4) 전체 텍스트에서 등급 후보 수집
+    # 학생 본인 이름은 키워드에서 동적으로 제외
+    student_name = meta.get("student_name") if isinstance(meta, dict) else None
+    extra_stop = {student_name} if student_name else set()
+    top_keywords_all = extract_keywords_kiwi(text_for_keywords, top_n=60)
+    top_keywords = [k for k in top_keywords_all if k not in extra_stop][:40]
+
+    # 4) 전체 텍스트에서 등급 후보 수집 (기존 로직 재사용)
     grade_candidates = collect_all_floats(text_for_keywords, SPECIAL_PATTERNS["grade"])
     reasonable = [g for g in grade_candidates if 1 <= g <= 9]
     overall_grade_num = None
@@ -161,11 +157,18 @@ def extract_example_specific_signals(html_text: str) -> Dict:
     subjects = infer_subjects_from_text(text_for_keywords)
 
     # 6) 목표 대학/트랙 추론
-    detected_tracks: list[str] = []
+    detected_tracks_raw: list[tuple[str, int]] = []
     lower_text = text_for_keywords.lower()
     for track, keywords in TRACK_DETECTION_RULES.items():
-        if any(kw.lower() in lower_text for kw in keywords):
-            detected_tracks.append(track)
+        # 트랙별 키워드 매칭 횟수 합계로 강도 측정
+        hit_strength = sum(lower_text.count(kw.lower()) for kw in keywords)
+        if hit_strength > 0:
+            detected_tracks_raw.append((track, hit_strength))
+
+    # 매칭 강도 내림차순으로 정렬 → 단순한 dict 순서가 아닌 실제 신호 강도 기반
+    detected_tracks_raw.sort(key=lambda x: -x[1])
+    detected_tracks: list[str] = [t for t, _ in detected_tracks_raw]
+    detected_track_strengths: dict[str, int] = dict(detected_tracks_raw)
     
     target_university = detect_target_university(lower_text)
 
@@ -188,13 +191,53 @@ def extract_example_specific_signals(html_text: str) -> Dict:
         k in raw_text for k in ["글쓰기", "콘텐츠", "미디어", "기획", "스토리텔링"]
     )
 
+    # ── 확장 신호 ──
+    science_risk = any(k in raw_text for k in [
+        "과학이 약점", "과학이 부족", "과학 4등급", "과학 5등급", "이과 약점"
+    ])
+    english_strength = any(k in raw_text for k in [
+        "영어 강점", "영어 1등급", "영어 우수", "영어 능통"
+    ])
+    # 수시 vs 정시 성향 추론
+    susi_signal = sum(raw_text.count(k) for k in ["수시", "학종", "교과전형", "학생부종합", "내신 위주"])
+    jeongsi_signal = sum(raw_text.count(k) for k in ["정시", "수능 위주", "수능 집중", "모평"])
+    if susi_signal >= jeongsi_signal + 2:
+        admission_orientation = "수시 중심"
+    elif jeongsi_signal >= susi_signal + 2:
+        admission_orientation = "정시 중심"
+    elif susi_signal > 0 or jeongsi_signal > 0:
+        admission_orientation = "수시/정시 병행"
+    else:
+        admission_orientation = "미탐지"
+
+    # 이과/문과 적합도
+    sci_track_fit = any(k in raw_text for k in [
+        "이과", "이공계", "공학", "STEM", "자연계열", "이과형"
+    ])
+    humanities_track_fit = any(k in raw_text for k in [
+        "문과", "인문계열", "사회계열", "문과형"
+    ])
+    # 의약학 지향
+    med_track_fit = any(k in raw_text for k in [
+        "의대", "의예", "약대", "치대", "한의대", "수의대", "MMI", "의학"
+    ])
+    # 비교과 활동 충실도
+    extracurricular_strong = any(k in raw_text for k in [
+        "동아리 적극", "비교과 우수", "수상", "탐구보고서", "프로젝트", "발표"
+    ])
+    # 자기주도성
+    self_directed = any(k in raw_text for k in [
+        "자기주도", "자기 주도", "주체적", "스스로 학습", "자율 학습"
+    ])
+
     return {
         "raw_text": raw_text,
         "overall_grade": overall_grade_num,
         "subjects": subjects,
-        "topkeywords": [w for w, _ in topkeywords.most_common(40)],
-        "top_keywords": [w for w, _ in topkeywords.most_common(40)],
+        "top_keywords": top_keywords,
+        "topkeywords": top_keywords,  # 호환성 유지
         "detected_tracks": detected_tracks,
+        "detected_track_strengths": detected_track_strengths,
         "preferred_track": detected_tracks[0] if detected_tracks else None,
         "target_university": target_university,
         "is_student_record_heavy": is_student_record_heavy,
@@ -202,6 +245,14 @@ def extract_example_specific_signals(html_text: str) -> Dict:
         "essay_strength": essay_strength,
         "math_risk": math_risk,
         "humanities_media_fit": humanities_media_fit,
+        "science_risk": science_risk,
+        "english_strength": english_strength,
+        "admission_orientation": admission_orientation,
+        "sci_track_fit": sci_track_fit,
+        "humanities_track_fit": humanities_track_fit,
+        "med_track_fit": med_track_fit,
+        "extracurricular_strong": extracurricular_strong,
+        "self_directed": self_directed,
         "lines_samples": lines[:50],
         "report_meta": meta,
         "diagnosis_sections": diag_sections,
@@ -231,68 +282,14 @@ def normalize_subject(v: Optional[float]) -> float:
     return max(0.0, 100 - (v - 1) * 12.5)
 
 
-
-# 계열별 핵심 키워드와 가중치: 일반 키워드(1.0)보다 고가중치 키워드를 우선 적용
-CATEGORY_KEYWORD_WEIGHTS: Dict[str, Dict[str, float]] = {
-    "인공지능·데이터사이언스": {
-        "인공지능": 5.0, "AI": 5.0, "머신러닝": 4.5, "딥러닝": 4.5,
-        "데이터사이언스": 4.0, "자연어처리": 3.5, "컴퓨터비전": 3.5,
-    },
-    "컴퓨터·소프트웨어": {
-        "소프트웨어": 4.5, "프로그래밍": 4.0, "코딩": 3.5,
-        "알고리즘": 3.5, "개발": 3.0, "컴퓨터": 3.0,
-    },
-    "미디어·광고·콘텐츠": {
-        "미디어": 4.5, "콘텐츠": 4.0, "스토리텔링": 4.0, "기획": 3.5,
-        "광고": 3.0, "홍보": 3.0, "저널리즘": 3.5, "방송": 3.0,
-    },
-    "국어국문·언어": {
-        "글쓰기": 4.5, "문학": 4.0, "국어": 3.5, "언어": 3.0,
-        "문예": 3.5, "번역": 3.0, "비평": 3.0,
-    },
-    "사회과학": {
-        "정치": 4.0, "법률": 4.0, "행정": 3.5, "국제관계": 4.0,
-        "외교": 3.5, "사회문제": 3.0, "인권": 3.0,
-    },
-    "경영·경제": {
-        "경영": 4.0, "경제": 4.0, "창업": 4.0, "금융": 3.5,
-        "마케팅": 3.5, "무역": 3.0, "투자": 3.0,
-    },
-    "수학·통계": {
-        "수학": 4.0, "통계": 4.5, "미적분": 4.0, "확률": 3.5,
-        "선형대수": 4.0, "알고리즘": 3.5, "최적화": 3.5,
-    },
-    "생명과학·바이오": {
-        "생명과학": 5.0, "유전": 4.5, "DNA": 4.5, "바이오": 4.0,
-        "세포": 3.5, "분자생물": 4.0, "면역": 3.5,
-    },
-    "의학": {
-        "의료": 4.5, "임상": 4.5, "진단": 4.0, "해부": 4.5,
-        "약리": 4.0, "병태생리": 4.5, "수술": 4.0,
-    },
-    "약학": {
-        "약학": 5.0, "제약": 4.5, "신약": 4.5, "약물": 4.0,
-        "의약품": 4.0, "약사": 4.5,
-    },
-}
-
 def infer_category_scores(signals: Dict) -> Dict[str, float]:
     text = signals["raw_text"]
     scores: Dict[str, float] = {k: 0.0 for k in CATEGORY_KEYWORDS}
 
-    # 1) 가중치 키워드 우선 적용
-    for cat, kw_weights in CATEGORY_KEYWORD_WEIGHTS.items():
-        if cat not in scores:
-            continue
-        for kw, weight in kw_weights.items():
-            if kw in text:
-                scores[cat] += weight
-
-    # 2) 일반 카테고리 키워드 매칭 (가중치 키워드에 없는 나머지)
+    # 1) 카테고리 키워드 매칭
     for cat, kws in CATEGORY_KEYWORDS.items():
-        weighted_kws = set(CATEGORY_KEYWORD_WEIGHTS.get(cat, {}).keys())
         for kw in kws:
-            if kw not in weighted_kws and kw in text:
+            if kw in text:
                 scores[cat] += 2.5
 
     subjects = signals.get("subjects", {})
@@ -343,9 +340,24 @@ def infer_category_scores(signals: Dict) -> Dict[str, float]:
 def choose_target_departments(signals: Dict, category_scores: Dict[str, float], max_n: int = 3) -> List[str]:
     text = signals.get("raw_text", "") or ""
     detected_tracks = signals.get("detected_tracks", [])
-    preferred_track = detected_tracks[0] if detected_tracks else None
     target_university = signals.get("target_university")
     final_conclusion = signals.get("final_conclusion", {}) or {}
+
+    # 카테고리 1위 ─ 트랙 가중치 결정에 사용
+    top_category = None
+    top_cat_score = 0.0
+    if category_scores:
+        ranked_cats = sorted(category_scores.items(), key=lambda x: -x[1])
+        top_category, top_cat_score = ranked_cats[0]
+
+    # AI/데이터/SW 트랙은 명백한 STEM/공학 학생일 때만 강하게 반영
+    # 카테고리 1위가 의약학/인문/미디어/교육 계열이면 약하게 처리
+    NON_TECH_DOMINANT_CATS = {
+        "의학", "치의학", "한의학", "약학", "간호", "보건·재활", "수의학",
+        "미디어·광고·콘텐츠", "국어국문·언어", "역사·철학·윤리",
+        "교육", "심리·상담", "사회과학", "예술·디자인",
+    }
+    is_non_tech_dominant = top_category in NON_TECH_DOMINANT_CATS
 
     dept_scores = defaultdict(float)
 
@@ -354,68 +366,98 @@ def choose_target_departments(signals: Dict, category_scores: Dict[str, float], 
             if d:
                 dept_scores[d] += score
 
-    # 1) 트랙 우선: 가장 강한 신호
-    if preferred_track and preferred_track in TRACK_TO_DEPARTMENTS:
-        add_departments(TRACK_TO_DEPARTMENTS[preferred_track], 8.0)
+    # 1) 트랙 우선 (카테고리-인지형)
+    # detected_tracks는 이미 강도 내림차순으로 정렬됨
+    if detected_tracks and detected_tracks[0] in TRACK_TO_DEPARTMENTS:
+        preferred_track = detected_tracks[0]
+        track_weight = 8.0
+        # AI/데이터/SW 트랙은 비-STEM 1위일 때 약화
+        if preferred_track in {"AI", "데이터", "SW"} and is_non_tech_dominant:
+            track_weight = 2.0
+        add_departments(TRACK_TO_DEPARTMENTS[preferred_track], track_weight)
 
-    # 2) 직접 시드 언급: 키워드 길이와 등장 횟수 반영
+    # 2) 직접 시드 언급
     for seed, departments in DEPT_ALIAS.items():
         hit_count = text.count(seed)
-        is_korean = bool(re.search(r'[가-힣]', seed))
-        if hit_count > 0:
-            base = 6.0 if (len(seed) >= 4 or is_korean) else 3.0
-            add_departments(departments, base + min(hit_count - 1, 3) * 1.5)
+        if hit_count <= 0:
+            continue
+        # 한글 여부로 base 점수 결정 (영어 약어는 오탐 위험으로 패널티)
+        is_korean = bool(re.search(r"[가-힣]", seed))
+        if is_korean:
+            base = 6.0 if len(seed) >= 4 else 4.0
+        else:
+            base = 2.0  # AI, SW 같은 영어 약어는 base 낮춤
+        add_departments(departments, base + min(hit_count - 1, 3) * 1.5)
 
     # 3) 최종 결론/시뮬레이션 단서 반영
     conclusion_text = " ".join(
         [c.get("title", "") + " " + c.get("body", "") for c in final_conclusion.get("cards", [])]
     )
 
-    if "AI" in conclusion_text and "인공지능" in conclusion_text:
-        add_departments(TRACK_TO_DEPARTMENTS.get("AI", []), 6.0)
-    if "데이터" in conclusion_text:
-        add_departments(TRACK_TO_DEPARTMENTS.get("데이터", []), 5.5)
-    if "소프트웨어" in conclusion_text or "코딩" in conclusion_text:
-        add_departments(TRACK_TO_DEPARTMENTS.get("SW", []), 5.0)
+    # 결론에 강한 비-STEM 신호가 있으면 AI 보정 약화
+    strong_nontech_in_conclusion = any(k in conclusion_text for k in [
+        "의대", "의예", "약학", "치의학", "한의학", "간호", "수의학",
+        "미디어", "콘텐츠", "방송", "기획", "글쓰기",
+        "교사", "교직", "심리", "상담",
+    ])
 
-    # IST 대학 목표 보정
-    if target_university in {"KAIST", "DGIST", "GIST", "UNIST"}:
+    # AI 보정 (중복 제거, 한 번만 실행)
+    if ("AI" in conclusion_text or "인공지능" in conclusion_text):
+        ai_weight = 2.0 if strong_nontech_in_conclusion else 6.0
+        add_departments(TRACK_TO_DEPARTMENTS.get("AI", []), ai_weight)
+
+    if "데이터" in conclusion_text:
+        data_weight = 1.5 if strong_nontech_in_conclusion else 5.5
+        add_departments(TRACK_TO_DEPARTMENTS.get("데이터", []), data_weight)
+
+    if "소프트웨어" in conclusion_text or "코딩" in conclusion_text:
+        sw_weight = 1.5 if strong_nontech_in_conclusion else 5.0
+        add_departments(TRACK_TO_DEPARTMENTS.get("SW", []), sw_weight)
+
+    # IST 대학 목표 보정 (이공계 명시 목표일 때만)
+    if target_university in {"KAIST", "DGIST", "GIST", "UNIST"} and not is_non_tech_dominant:
         add_departments([
-            "인공지능학과",
-            "데이터사이언스학과",
-            "컴퓨터공학과",
-            "전기전자공학과",
-            "지능정보공학과",
-            "소프트웨어학과"
+            "인공지능학과", "데이터사이언스학과", "컴퓨터공학과",
+            "전기전자공학과", "지능정보공학과", "소프트웨어학과",
         ], 4.5)
-    
-    if "MMI" in conclusion_text:
+
+    # 의약학·교육 결론 보정 (강화)
+    if any(k in conclusion_text for k in ["의대", "의예", "의학", "의료", "MMI"]):
+        add_departments(["의예과", "의과학과"], 12.0)
         add_departments(TRACK_TO_DEPARTMENTS.get("MMI", []), 5.0)
 
     if "약학" in conclusion_text or "제약" in conclusion_text:
-        add_departments(DEPT_ALIAS.get("약학", []), 4.5)
+        add_departments(["약학과", "제약학과"] + DEPT_ALIAS.get("약학", []), 9.0)
+
+    if "치의학" in conclusion_text or "치과" in conclusion_text:
+        add_departments(["치의예과", "치의학과"], 9.0)
+
+    if "한의" in conclusion_text:
+        add_departments(["한의예과", "한의학과"], 9.0)
 
     if "간호" in conclusion_text or "보건" in conclusion_text:
         add_departments(DEPT_ALIAS.get("보건·재활", []) + DEPT_ALIAS.get("간호", []), 4.0)
 
-    if "의학" in conclusion_text or "의료" in conclusion_text:
-        add_departments(DEPT_ALIAS.get("의학", []), 4.5)
+    if "교사" in conclusion_text or "교직" in conclusion_text:
+        add_departments(DEPT_ALIAS.get("교육", []), 6.0)
 
-    # 4) 상위 카테고리 fallback: 점수 높은 카테고리만 반영
+    if "미디어" in conclusion_text or "콘텐츠" in conclusion_text or "방송" in conclusion_text:
+        add_departments(DEPT_ALIAS.get("미디어·광고·콘텐츠", []) + DEPT_ALIAS.get("미디어", []), 6.0)
+
+    # 4) 상위 카테고리 fallback
     sorted_cats = sorted(category_scores.items(), key=lambda x: x[1], reverse=True)
-
-    top_score = sorted_cats[0][1] if sorted_cats else 0.0
+    top_score_val = sorted_cats[0][1] if sorted_cats else 0.0
     for cat, score in sorted_cats[:5]:
         if score <= 0:
             continue
-        if top_score > 0 and score < top_score * 0.55:
+        if top_score_val > 0 and score < top_score_val * 0.55:
             continue
-
-        # 카테고리 점수를 완만하게 학과 점수로 변환
-        weight = 2.5 + min(score / 40.0, 3.5)
+        # 카테고리 1위에는 더 큰 가중치를 줘서 변별력 확보
+        weight_base = 3.5 if cat == top_category else 2.5
+        weight = weight_base + min(score / 40.0, 3.5)
         add_departments(CATEGORY_TO_DEPARTMENTS.get(cat, []), weight)
 
-    # 5) 보정 규칙: 의약학/보건 분리
+    # 5) 보정 규칙
     if category_scores.get("의학", 0) > 0 and category_scores.get("간호", 0) > 0:
         if category_scores["의학"] >= category_scores["간호"] + 15:
             for d in DEPT_ALIAS.get("의학", []):
@@ -429,15 +471,25 @@ def choose_target_departments(signals: Dict, category_scores: Dict[str, float], 
         for d in DEPT_ALIAS.get("보건·재활", []):
             dept_scores[d] += 1.5
 
-    if category_scores.get("인공지능·데이터사이언스", 0) > 0:
+    if category_scores.get("인공지능·데이터사이언스", 0) > 0 and not is_non_tech_dominant:
         for d in DEPT_ALIAS.get("인공지능·데이터사이언스", []):
             dept_scores[d] += 2.0
 
-    if category_scores.get("컴퓨터·소프트웨어", 0) > 0:
+    if category_scores.get("컴퓨터·소프트웨어", 0) > 0 and not is_non_tech_dominant:
         for d in DEPT_ALIAS.get("컴퓨터·소프트웨어", []):
             dept_scores[d] += 1.5
 
-    # 6) 너무 범용적인 학과는 약간 감점
+    # 6) 비-STEM 카테고리 1위인데 AI/데이터 학과가 상위에 끼어든 경우 패널티
+    if is_non_tech_dominant:
+        TECH_DEPT_PENALTY = {
+            "인공지능학과", "AI학과", "데이터사이언스학과", "지능정보공학과",
+            "컴퓨터공학과", "소프트웨어학과", "정보통신학과",
+        }
+        for d in TECH_DEPT_PENALTY:
+            if d in dept_scores:
+                dept_scores[d] *= 0.35  # 65% 감점
+
+    # 7) 너무 범용적인 학과는 약간 감점
     generic_penalty = {
         "교육학과": 0.5,
         "사회학과": 0.5,
@@ -448,9 +500,8 @@ def choose_target_departments(signals: Dict, category_scores: Dict[str, float], 
         if dept in dept_scores:
             dept_scores[dept] -= penalty
 
-    # 7) 최종 정렬: 점수 우선, 동점이면 이름순
+    # 8) 최종 정렬
     ranked = sorted(dept_scores.items(), key=lambda x: (-x[1], x[0]))
-
     return [dept for dept, _ in ranked[:max_n]]
 
 def major_match_score(target_departments: List[str], university: Dict) -> Tuple[float, List[str]]:
@@ -462,30 +513,29 @@ def major_match_score(target_departments: List[str], university: Dict) -> Tuple[
     for dep in university.get("departments", []):
         dep_name = dep.get("name", "")
         dep_aliases = dep.get("aliases", []) or []
-        # 학과명 + aliases 모두 후보로
         candidates = [dep_name] + dep_aliases
         norm_candidates = [normalize_major_name(x) for x in candidates if x]
 
         for target, raw_target in zip(targets, target_departments):
-            best_score_for_dep = 0.0
             for cand, raw_cand in zip(norm_candidates, candidates):
                 if not cand:
                     continue
                 if target == cand:
-                    best_score_for_dep = max(best_score_for_dep, 30)
+                    score += 30
+                    matched.append(dep_name)
+                    break
                 elif target in cand or cand in target:
-                    best_score_for_dep = max(best_score_for_dep, 22)
+                    score += 22
+                    matched.append(dep_name)
+                    break
                 elif (
                     ("인공지능" in raw_target and any(k in raw_cand for k in ["AI", "인공지능", "지능정보", "컴퓨터"]))
                     or ("데이터" in raw_target and any(k in raw_cand for k in ["데이터", "통계", "컴퓨터", "AI"]))
                     or ("소프트웨어" in raw_target and any(k in raw_cand for k in ["소프트웨어", "컴퓨터", "정보통신"]))
-                    or ("미디어" in raw_target and any(k in raw_cand for k in ["미디어", "언론", "커뮤니케이션", "콘텐츠"]))
                 ):
-                    best_score_for_dep = max(best_score_for_dep, 18)
-
-            if best_score_for_dep > 0:
-                score += best_score_for_dep
-                matched.append(dep_name)
+                    score += 18
+                    matched.append(dep_name)
+                    break
 
     return score, list(dict.fromkeys(matched))
 
@@ -540,62 +590,14 @@ def target_bonus(university_name: str, signals: Dict) -> float:
     return 0.0
 
 
-def _build_reason(mscore: float, tscore: float, bscore: float,
-                  fitcluster_bonus: float, bonus: float, band: Optional[str]) -> str:
-    parts = []
-    if mscore >= 28:
-        parts.append("학과 직접 매칭 강함")
-    elif mscore >= 18:
-        parts.append("학과 부분 매칭")
-    if bscore >= 80:
-        parts.append(f"등급대 적정({band})" if band else "등급대 적정")
-    elif bscore >= 62:
-        parts.append(f"등급대 경계({band})" if band else "등급대 경계")
-    if fitcluster_bonus > 0:
-        parts.append("계열 적합 클러스터 일치")
-    if bonus > 0:
-        parts.append("목표대학 가산")
-    if tscore >= 60:
-        parts.append("인재상 키워드 다수 매칭")
-    return " · ".join(parts) if parts else "복합 점수 기준"
-
-
-def data_quality_diagnosis(signals: Dict) -> Dict:
-    """분석 신뢰도를 상태별로 진단."""
-    grade_ok = signals.get("overall_grade") is not None
-    subjects_ok = any(v is not None for v in (signals.get("subjects") or {}).values())
-    tracks_ok = bool(signals.get("detected_tracks"))
-    keywords_ok = len(signals.get("top_keywords") or signals.get("topkeywords") or []) >= 5
-
-    score = sum([grade_ok, subjects_ok, tracks_ok, keywords_ok])
-    if score >= 3:
-        status = "분석 가능"
-        color = "#16a34a"
-    elif score == 2:
-        status = "부분 분석 가능"
-        color = "#d97706"
-    else:
-        status = "분석 신뢰 낮음"
-        color = "#dc2626"
-
-    return {
-        "status": status,
-        "color": color,
-        "grade_ok": grade_ok,
-        "subjects_ok": subjects_ok,
-        "tracks_ok": tracks_ok,
-        "keywords_ok": keywords_ok,
-    }
-
-
-def recommend_universities(db: Dict, signals: Dict, target_departments: List[str], topn: int = 6) -> List[Dict]:
+def recommend_universities(db: Dict, signals: Dict, target_departments: List[str], top_n: int = 5) -> List[Dict]:
     recs = []
     overall_grade = signals.get("overall_grade")
     gscore = grade_fit_score(overall_grade)
 
     for u in db.get("universities", []):
-        mscore, matched = major_match_score(target_departments, u)
-        if mscore <= 0:
+        mscore_raw, matched = major_match_score(target_departments, u)
+        if mscore_raw <= 0:
             continue
 
         tscore = keyword_fit_score(signals, u.get("talent_keywords", []))
@@ -614,15 +616,27 @@ def recommend_universities(db: Dict, signals: Dict, target_departments: List[str
             if fitcluster in top_fitclusters:
                 fitcluster_bonus += 8.0
 
-        total = round(
-            mscore * 0.40 +
-            tscore * 0.18 +
-            gscore * 0.12 +
-            bscore * 0.22 +
-            fitcluster_bonus +
-            bonus,
-            2
+        # ── 알고리즘 개선 ──
+        # 1) mscore 정규화 (0~100 스케일)
+        #    - 학과당 30점이 최대인데, 1개 학과 매칭만으로도 60점 이상 받도록 곡선 강화
+        #    - sqrt 변환으로 1~3개 매칭의 차이를 완만하게 보정
+        import math
+        mscore_norm = min(100.0, math.sqrt(mscore_raw) * 14.0)
+
+        # 2) 가중치 재조정 (합 1.0 유지, 학과 일치도 비중 확대)
+        #    학과 매칭 50% + 등급 23% + 인재상 15% + 성적 12%
+        base_score = (
+            mscore_norm * 0.50 +
+            bscore      * 0.23 +
+            tscore      * 0.15 +
+            gscore      * 0.12
         )
+
+        # 3) 보너스는 base 위에 가산 (최대 +25점)
+        bonus_total = min(25.0, fitcluster_bonus + bonus)
+
+        # 4) 최종: base에 보너스 더하되 100점 상한
+        total = round(min(100.0, base_score + bonus_total), 2)
 
         recs.append({
             "university": u.get("name"),
@@ -633,29 +647,23 @@ def recommend_universities(db: Dict, signals: Dict, target_departments: List[str
             "talent_keywords": u.get("talent_keywords", []),
             "notes": u.get("notes", ""),
             "target_bonus": bonus,
-            "major_score": round(mscore, 1),
+            "major_score": round(mscore_norm, 1),  # 정규화된 값 표시
+            "major_score_raw": round(mscore_raw, 1),
             "talent_score": round(tscore, 1),
             "grade_score": round(gscore, 1),
             "admission_band_score": round(bscore, 1),
             "matched_admission_band": band,
             "matched_department_detail": dep_match,
             "fitcluster_bonus": fitcluster_bonus,
-            "support_level": (
-                "상향" if bscore >= 90
-                else "적정" if bscore >= 78
-                else "안정/경계" if bscore >= 62
-                else "재고"
-            ),
-            "recommend_reason": _build_reason(mscore, tscore, bscore, fitcluster_bonus, bonus, band),
         })
 
     recs.sort(key=lambda x: x["fit_score"], reverse=True)
-    return recs[:topn]
+    return recs[:top_n]
 
 
 def fallback_summary(signals: Dict, target_departments: List[str], recs: List[Dict]) -> str:
     dept_text = ', '.join(target_departments)
-    univ_text = ', '.join(r['university'] for r in recs[:6])
+    univ_text = ', '.join(r['university'] for r in recs[:5])
     parts = [f'현재 예시 HTML 기준 우선 추천 학과는 {dept_text}입니다.']
     if signals.get('admission_preference'):
         parts.append(f"학생은 {signals['admission_preference']} 중심 전략에 더 적합한 패턴으로 해석됩니다.")
@@ -690,17 +698,14 @@ def summarize_with_gemini(signals: Dict, target_departments: List[str], recs: Li
     return fallback_summary(signals, target_departments, recs)
 
 def main():
-    st.set_page_config(page_title='학생 HTML 기반 대학 추천기', page_icon='🎓', layout='wide')
+    st.set_page_config(
+        page_title='학생 HTML 기반 대학 추천기',
+        page_icon='🎓',
+        layout='wide',
+        initial_sidebar_state='collapsed'
+    )
     inject_css()
     render_hero()
-
-    with st.sidebar:
-        st.header('설정')
-        env_help_panel()
-        st.markdown('### 비밀번호 해시 생성기')
-        gen_pw = st.text_input('새 비밀번호', type='password')
-        if st.button('해시 생성', use_container_width=True) and gen_pw:
-            st.code(hash_password(gen_pw), language='text')
 
     if not require_login():
         st.stop()
@@ -711,129 +716,94 @@ def main():
         st.error(str(e))
         st.stop()
 
+    # DB 통계 집계
+    univs = db.get('universities', [])
+    n_univ = len(univs)
+    n_dept = sum(len(u.get('departments', [])) for u in univs)
+    n_adm = sum(len(d.get('admissions', [])) for u in univs for d in u.get('departments', []))
+
     top1, top2, top3 = st.columns(3)
     with top1:
-        render_metric_card('연결 DB', f"{len(db.get('universities', []))}개 대학", '모든 대학 데이터가 로드되었습니다.')
+        render_metric_card(
+            '연결 DB',
+            f"{n_univ}개 대학",
+            f"학과 {n_dept}개 · 전형 {n_adm}개 정보를 로드했습니다."
+        )
     with top2:
-        render_metric_card('입력 형식', '학생 HTML', '현재 예시 리포트 구조에 맞춘 파서가 동작합니다.')
+        render_metric_card(
+            '입력 형식',
+            '학생 HTML',
+            '학생 정보를 담은 MOS 진단 보고서를 삽입하세요.'
+        )
     with top3:
-        render_metric_card('분석 방식', 'JSON + HTML', '구조화된 대학 DB와 학생 리포트를 사용합니다.')
+        render_metric_card(
+            '분석 엔진',
+            'Gemini + Kiwi 형태소',
+            'AI 요약과 한국어 형태소 분석으로 핵심 신호만 추출합니다.'
+        )
 
     uploaded_html = st.file_uploader('학생 분석 HTML 업로드', type=['html', 'htm'])
 
     if uploaded_html is not None:
         html_text = uploaded_html.read().decode('utf-8', errors='ignore')
         signals = extract_example_specific_signals(html_text)
-
-        # ── 패치 6: 추출 정보 검증 / 수동 보정 ──────────────────────────────
-        with st.expander("추출 정보 검증 (등급·목표대학 수동 보정)", expanded=True):
-            col_v1, col_v2 = st.columns(2)
-            with col_v1:
-                override_grade = st.number_input(
-                    "전체 등급 보정 (추출값: {})".format(signals.get("overall_grade") or "미탐지"),
-                    min_value=1.0, max_value=9.0, step=0.1,
-                    value=float(signals.get("overall_grade") or 3.0),
-                    key="override_grade"
-                )
-            with col_v2:
-                override_target = st.text_input(
-                    "목표 대학 보정 (추출값: {})".format(signals.get("target_university") or "미탐지"),
-                    value=signals.get("target_university") or "",
-                    key="override_target"
-                )
-            if st.button("보정값으로 재분석", key="btn_reanalyze"):
-                st.session_state["grade_override"] = override_grade
-                st.session_state["target_override"] = override_target
-                st.rerun()
-
-        # 세션 보정값 반영
-        if "grade_override" in st.session_state:
-            signals["overall_grade"] = st.session_state["grade_override"]
-        if "target_override" in st.session_state and st.session_state["target_override"]:
-            signals["target_university"] = st.session_state["target_override"]
-        # ────────────────────────────────────────────────────────────────────
         category_scores = infer_category_scores(signals)
         target_departments = choose_target_departments(signals, category_scores, max_n=2)
-        recs = recommend_universities(db, signals, target_departments, topn=6)
+        recs = recommend_universities(db, signals, target_departments, top_n=5)
         summary = summarize_with_gemini(signals, target_departments, recs)
 
         m1, m2, m3, m4 = st.columns(4)
         with m1:
             render_metric_card('추천 학과 수', str(len(target_departments)), '요청 조건에 맞춰 최대 2개까지 제시합니다.')
         with m2:
-            render_metric_card('추천 대학 수', str(len(recs)), '추천 결과는 최대 6개 대학까지 노출합니다.')
+            render_metric_card('추천 대학 수', str(len(recs)), '추천 결과는 최대 5개 대학까지 노출합니다.')
         with m3:
             render_metric_card('추정 전체 등급', str(signals.get('overall_grade') or '-'), '리포트 서술에서 탐지한 대표 등급 값입니다.')
         with m4:
             render_metric_card('전형 적합도', signals.get('admission_preference') or '미탐지', '예시 HTML의 전형 서술을 우선 반영합니다.')
 
-        # 패치 8: 데이터 품질 진단 배지
-        dq = data_quality_diagnosis(signals)
-        st.markdown(
-            f"<div style='margin:0.5rem 0 1rem 0; padding:0.5rem 1rem; border-radius:10px; "
-            f"background:{dq['color']}18; border:1px solid {dq['color']}44; color:{dq['color']}; font-weight:700;'>"
-            f"📊 데이터 품질: {dq['status']} &nbsp;|&nbsp; "
-            f"등급 {'✅' if dq['grade_ok'] else '❌'} &nbsp;"
-            f"과목점수 {'✅' if dq['subjects_ok'] else '❌'} &nbsp;"
-            f"트랙탐지 {'✅' if dq['tracks_ok'] else '❌'} &nbsp;"
-            f"키워드 {'✅' if dq['keywords_ok'] else '❌'}"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-
         left, right = st.columns([1.05, 1.35])
         with left:
             render_chip_row('우선 추천 학과', target_departments, dept=True)
             render_chip_row('핵심 키워드', signals.get('top_keywords', [])[:12])
-            render_chip_row('학생 신호', [
-                signals.get("detected_tracks") or '희망 트랙 미탐지',
-                signals.get('target_university') or '목표 대학 미탐지',
+
+            # ── 학생 신호 ─────────────────────────────────────
+            tracks = signals.get("detected_tracks") or []
+            track_label = f"선호 트랙: {', '.join(tracks)}" if tracks else "선호 트랙: 미탐지"
+            target_univ = signals.get('target_university')
+            target_label = f"목표 대학: {target_univ}" if target_univ else "목표 대학: 미탐지"
+
+            student_signals = [
+                track_label,
+                target_label,
+                f"전형 성향: {signals.get('admission_orientation', '미탐지')}",
                 '논술/글쓰기 강점' if signals.get('essay_strength') else '논술 강점 미탐지',
-                '수학 위험 신호' if signals.get('math_risk') else '수학 위험 미탐지',
-                '인문·미디어 적합' if signals.get('humanities_media_fit') else '계열 적합도 일반 추정'
-            ])
+                '영어 강점' if signals.get('english_strength') else '영어 강점 미탐지',
+                '수학 위험 신호' if signals.get('math_risk') else '수학 위험 없음',
+                '과학 위험 신호' if signals.get('science_risk') else '과학 위험 없음',
+                '인문·미디어 적합' if signals.get('humanities_media_fit') else '인문·미디어 약함',
+                '이공계 적합' if signals.get('sci_track_fit') else None,
+                '인문계 적합' if signals.get('humanities_track_fit') else None,
+                '의·약학 지향' if signals.get('med_track_fit') else None,
+                '비교과 활동 충실' if signals.get('extracurricular_strong') else None,
+                '자기주도성 강함' if signals.get('self_directed') else None,
+            ]
+            student_signals = [s for s in student_signals if s]
+            render_chip_row('학생 신호', student_signals)
+
             st.markdown(f"<div class='glass-card'><div class='section-title'>요약 분석</div><div class='subtle' style='font-size:0.96rem; line-height:1.7; color:#334155;'>{summary}</div></div>", unsafe_allow_html=True)
-            score_items = ''.join([
-                f"<div class='score-bar-wrap'><div class='score-bar-label'>{k}</div><div class='score-bar'><div class='score-fill' style='width:{max(0,min(100,int(v)))}%'></div></div></div>"
-                for k, v in sorted(category_scores.items(), key=lambda x: x[1], reverse=True)
-            ])
-            st.markdown(f"<div class='glass-card'><div class='section-title'>계열 적합도</div>{score_items}</div>", unsafe_allow_html=True)
+
+            # ── 계열 적합도 (원그래프) ────────────────────────
+            render_category_donut(category_scores)
 
         with right:
             st.markdown("<div class='section-title'>추천 대학</div>", unsafe_allow_html=True)
             if not target_departments:
                 st.warning("HTML에서 추천용 학과 후보를 충분히 구성하지 못했습니다. 키워드 사전 또는 최종 결론 반영 규칙을 점검해야 합니다.")
-            elif not recs:
+            elif not recs: 
                 st.warning("추천 학과 후보는 추출되었지만, 현재 DB 학과명과의 매칭이 충분하지 않아 대학 추천이 생성되지 않았습니다.")
-            else:
-                # 패치 7: 상향/적정/안정 지원군 분리
-                groups = {"상향": [], "적정": [], "안정/경계": [], "재고": []}
-                for rec in recs:
-                    groups[rec.get("support_level", "재고")].append(rec)
-
-                rank = 1
-                for level, label_emoji in [
-                    ("상향", "🔼 상향 지원"),
-                    ("적정", "🎯 적정 지원"),
-                    ("안정/경계", "🛡 안정/경계 지원"),
-                    ("재고", "⚠️ 재고 필요"),
-                ]:
-                    grp = groups[level]
-                    if not grp:
-                        continue
-                    st.markdown(
-                        f"<div style='font-size:0.88rem; font-weight:700; color:#64748b; "
-                        f"margin: 0.8rem 0 0.4rem 0; letter-spacing:0.03em;'>{label_emoji}</div>",
-                        unsafe_allow_html=True
-                    )
-                    for rec in grp:
-                        # recommend_reason을 notes에 보조로 표시
-                        if rec.get("recommend_reason") and not rec.get("notes"):
-                            rec = {**rec, "notes": rec["recommend_reason"]}
-                        elif rec.get("recommend_reason"):
-                            rec = {**rec, "notes": rec["notes"] + " · " + rec["recommend_reason"]}
-                        render_university_card(rec, rank)
-                        rank += 1
+            for i, rec in enumerate(recs, start=1):
+                render_university_card(rec, i)
 
         with st.expander('세부 추출 정보', expanded=False):
             st.json({
@@ -847,9 +817,7 @@ def main():
                 'humanities_media_fit': signals.get('humanities_media_fit'),
                 'category_scores': category_scores,
                 'target_departments': target_departments,
-                'top_keywords': signals.get('top_keywords', [])[:20],
-                'data_quality': data_quality_diagnosis(signals),
-                'rec_support_levels': {r['university']: r.get('support_level') for r in recs},
+                'top_keywords': signals.get('top_keywords', [])[:20]
             })
 
         with st.expander('원시 텍스트 미리보기', expanded=False):

@@ -1,6 +1,87 @@
 from typing import Dict, List
 
 import streamlit as st
+import plotly.graph_objects as go
+
+
+def render_category_donut(category_scores: Dict[str, float]):
+    """
+    계열 적합도를 도넛 차트로 표시.
+    - 양수 점수만 사용
+    - 비율 10% 미만 항목은 "기타"로 통합 (또는 생략)
+    - 색상 팔레트는 블루-그린-퍼플 계열
+    """
+    # 양수만 집계
+    positives = [(k, v) for k, v in category_scores.items() if v > 0]
+    if not positives:
+        st.markdown(
+            "<div class='glass-card'><div class='section-title'>계열 적합도</div>"
+            "<div class='subtle'>표시할 계열 점수가 없습니다.</div></div>",
+            unsafe_allow_html=True
+        )
+        return
+
+    total = sum(v for _, v in positives)
+    # 비율 계산 후 10% 미만은 제외
+    threshold = 0.10
+    major = [(k, v) for k, v in positives if v / total >= threshold]
+    # 모두 10% 미만이면 상위 3개만이라도 표시
+    if not major:
+        major = sorted(positives, key=lambda x: -x[1])[:3]
+
+    major.sort(key=lambda x: -x[1])
+    labels = [k for k, _ in major]
+    values = [v for _, v in major]
+
+    palette = [
+        "#2563eb", "#0ea5e9", "#10b981", "#8b5cf6", "#f59e0b",
+        "#ef4444", "#06b6d4", "#84cc16", "#a855f7", "#f97316",
+    ]
+    colors = palette[: len(labels)]
+
+    fig = go.Figure(data=[
+        go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.55,
+            marker=dict(colors=colors, line=dict(color="white", width=2)),
+            textinfo="percent",
+            textfont=dict(size=13, color="white", family="sans-serif"),
+            hovertemplate="<b>%{label}</b><br>점수: %{value:.1f}<br>비율: %{percent}<extra></extra>",
+            sort=False,
+        )
+    ])
+    fig.update_layout(
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.05,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=12),
+        ),
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=380,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+
+    st.markdown(
+        "<div class='glass-card'><div class='section-title'>계열 적합도 (상위 비중)</div>",
+        unsafe_allow_html=True
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    # 제외된 항목 안내
+    omitted = [k for k, v in positives if (k, v) not in major]
+    if omitted:
+        st.markdown(
+            f"<div class='subtle' style='margin-top:-0.5rem;'>10% 미만 항목 제외: "
+            f"{', '.join(omitted[:8])}{' ...' if len(omitted)>8 else ''}</div>",
+            unsafe_allow_html=True
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 def inject_css():
     st.markdown("""
@@ -59,7 +140,8 @@ def render_chip_row(title: str, items: List[str], dept: bool = False):
 
 def render_university_card(rec: Dict, rank: int):
     fit_pct = max(0, min(100, int(rec['fit_score'])))
-    major_pct = max(0, min(100, int(rec['major_score'] * 2.5)))
+    # major_score는 이미 0~100 정규화된 값 (recommend_universities에서 처리)
+    major_pct = max(0, min(100, int(rec['major_score'])))
     talent_pct = max(0, min(100, int(rec['talent_score'])))
     grade_pct = max(0, min(100, int(rec['grade_score'])))
     matched = ''.join([f'<span class="tag-chip">{x}</span>' for x in rec['matched_departments']])
