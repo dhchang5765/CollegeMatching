@@ -742,15 +742,89 @@ def main():
             'AI 요약과 한국어 형태소 분석으로 핵심 신호만 추출합니다.'
         )
 
-    uploaded_html = st.file_uploader('학생 분석 HTML 업로드', type=['html', 'htm'])
+    col_up1, col_up2 = st.columns(2)
+    with col_up1:
+        uploaded_html = st.file_uploader('학생 분석 HTML 업로드', type=['html', 'htm'])
+    with col_up2:
+        uploaded_answers = st.file_uploader('학생 답변 JSON 업로드', type=['json'])
 
-    if uploaded_html is not None:
+    # HTML 과 JSON 을 모두 첨부했을 때만 분석 진행.
+    # 한쪽만 올리면 분석을 막아 AI API 중복 호출(리소스 낭비)을 방지한다.
+    both_uploaded = (uploaded_html is not None) and (uploaded_answers is not None)
+
+    if (uploaded_html is not None) ^ (uploaded_answers is not None):
+        missing = "학생 답변 JSON" if uploaded_html is not None else "학생 분석 HTML"
+        st.info(
+            f"분석을 시작하려면 HTML 과 JSON 을 **모두** 첨부해야 합니다. "
+            f"현재 '{missing}' 파일이 없습니다. 두 파일이 모두 업로드되면 "
+            f"결합 분석이 1회 실행됩니다 (AI API 중복 호출 방지)."
+        )
+
+    if both_uploaded:
+        answer_result = None
+        answers_text = uploaded_answers.read().decode('utf-8', errors='ignore')
+
+        # ── HTML + JSON 결합 분석 (AI 파이프라인 단일 실행) ──
         html_text = uploaded_html.read().decode('utf-8', errors='ignore')
         signals = extract_example_specific_signals(html_text)
         category_scores = infer_category_scores(signals)
+
+        try:
+            from answer_pipeline import run_answer_pipeline
+            answer_result = run_answer_pipeline(
+                answers_text,
+                base_category_scores=category_scores,
+                use_llm=True,
+                log_prediction=False,
+            )
+            dec_scores = answer_result["decision"]["category_scores"]
+            if dec_scores:
+                merged = dict(category_scores)
+                for cat, v in dec_scores.items():
+                    merged[cat] = merged.get(cat, 0.0) + v
+                category_scores = merged
+            st.success(
+                f"HTML + 답변 JSON 결합 분석 (질문지 {answer_result['version']}, "
+                f"{answer_result['n_questions']}문항). "
+                f"판정 엔진 v{answer_result['decision']['decision_version']} · "
+                f"LLM 보강 {'사용' if answer_result['llm_used'] else '규칙 단독'}"
+            )
+        except Exception as e:
+            st.warning(f"답변 JSON 처리 실패 — HTML 신호만 사용합니다: {e}")
+
         target_departments = choose_target_departments(signals, category_scores, max_n=2)
         recs = recommend_universities(db, signals, target_departments, top_n=5)
         summary = summarize_with_gemini(signals, target_departments, recs)
+
+        # 답변 파이프라인 상세(설명가능성·거버넌스)
+        if answer_result is not None:
+            dec = answer_result["decision"]
+            ml = answer_result["ml_crosscheck"]
+            with st.expander("답변 기반 판정 근거 (설명가능성)", expanded=True):
+                st.markdown(f"**최종 판정 Top3**: {' · '.join(dec['top_categories'])}")
+                st.caption(
+                    f"판정 방식: 결정론 규칙 엔진 (동일 입력→동일 출력) · "
+                    f"버전 {dec['decision_version']}"
+                )
+                rs = answer_result["rule_signals"]
+                st.markdown(
+                    f"- 강점 과목: {rs['strong_subjects'] or '—'}\n"
+                    f"- 약점 과목: {rs['weak_subjects'] or '—'}\n"
+                    f"- 규칙 확정 진로 클러스터: {rs['career_clusters'] or '—'}\n"
+                    f"- 목표 대학 진술: {rs['target_tier_text'] or '—'}"
+                )
+                ml_mode = answer_result["ml_status"]["mode"]
+                ml_note = (
+                    f"ML 교차검증: {ml.get('confidence_flag','-')} "
+                    f"(모드 {ml_mode}, 레이블 "
+                    f"{answer_result['ml_status']['labeled']}/"
+                    f"{answer_result['ml_status']['threshold']}) — "
+                    f"ML은 판정자가 아닌 자문입니다."
+                )
+                st.caption(ml_note)
+                with st.expander("점수 변동 감사 추적 (audit trail)", expanded=False):
+                    st.json(dec["audit_trail"][:40])
+
 
         m1, m2, m3, m4 = st.columns(4)
         with m1:
@@ -758,9 +832,9 @@ def main():
         with m2:
             render_metric_card('추천 대학 수', str(len(recs)), '추천 결과는 최대 5개 대학까지 노출합니다.')
         with m3:
-            render_metric_card('추정 전체 등급', str(signals.get('overall_grade') or '-'), '리포트 서술에서 탐지한 대표 등급 값입니다.')
+            render_metric_card('추정 전체 등급', str(signals.get('overall_grade') or '-'), '리포트 또는 답변에서 탐지한 대표 등급 값입니다.')
         with m4:
-            render_metric_card('전형 적합도', signals.get('admission_preference') or '미탐지', '예시 HTML의 전형 서술을 우선 반영합니다.')
+            render_metric_card('전형 적합도', signals.get('admission_preference') or '미탐지', '전형 서술 또는 수시/정시 응답을 반영합니다.')
 
         left, right = st.columns([1.05, 1.35])
         with left:
@@ -798,6 +872,8 @@ def main():
 
         with right:
             st.markdown("<div class='section-title'>추천 대학</div>", unsafe_allow_html=True)
+            with st.expander("적합도 점수 산출 방식 안내", expanded=False):
+                render_score_methodology()
             if not target_departments:
                 st.warning("HTML에서 추천용 학과 후보를 충분히 구성하지 못했습니다. 키워드 사전 또는 최종 결론 반영 규칙을 점검해야 합니다.")
             elif not recs: 

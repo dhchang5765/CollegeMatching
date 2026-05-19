@@ -71,7 +71,7 @@ def render_category_donut(category_scores: Dict[str, float]):
         "<div class='glass-card'><div class='section-title'>계열 적합도 (상위 비중)</div>",
         unsafe_allow_html=True
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
     # 제외된 항목 안내
     omitted = [k for k, v in positives if (k, v) not in major]
     if omitted:
@@ -138,6 +138,40 @@ def render_chip_row(title: str, items: List[str], dept: bool = False):
     st.markdown(f"<div class='glass-card'><div class='section-title'>{title}</div>{chips if chips else empty}</div>", unsafe_allow_html=True)
 
 
+def render_score_methodology():
+    """대학 적합도 점수 산출 방식을 사용자에게 간단히 설명."""
+    st.markdown(
+        """
+<div class='glass-card'>
+  <div class='section-title'>적합도 점수는 어떻게 계산되나요?</div>
+  <div class='subtle' style='font-size:0.92rem; line-height:1.7; color:#334155;'>
+    각 대학의 적합도는 <b>0~100점</b>으로, 네 가지 항목에 가중치를 곱해
+    합산한 뒤 보너스를 더해 산출합니다.
+  </div>
+  <div style='margin-top:0.7rem; display:flex; flex-wrap:wrap; gap:0.4rem;'>
+    <span class='tag-chip'>학과 일치도 50%</span>
+    <span class='tag-chip'>등급대 적합 23%</span>
+    <span class='tag-chip'>인재상 부합 15%</span>
+    <span class='tag-chip'>기본 성적 12%</span>
+    <span class='tag-chip'>+ 보너스 최대 25점</span>
+  </div>
+  <div class='subtle' style='font-size:0.88rem; line-height:1.7; margin-top:0.7rem; color:#475569;'>
+    · <b>학과 일치도</b> — 학생의 추천 학과가 그 대학에 실제로 있는지·얼마나 가까운지<br>
+    · <b>등급대 적합</b> — 학생 등급이 그 학과 전형의 합격 등급대에 드는지<br>
+    · <b>인재상 부합</b> — 대학이 명시한 인재상 키워드와 학생 신호의 겹침<br>
+    · <b>기본 성적</b> — 전반적 내신 수준 반영<br>
+    · <b>보너스</b> — 목표 대학 일치, 계열 클러스터 적합 시 가산
+  </div>
+  <div class='subtle' style='font-size:0.84rem; margin-top:0.7rem; color:#94a3b8;'>
+    점수 = (학과 × 0.50 + 등급대 × 0.23 + 인재상 × 0.15 + 성적 × 0.12) + 보너스,
+    100점 상한. 동일 입력은 항상 동일 점수를 냅니다(결정론적).
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_university_card(rec: Dict, rank: int):
     fit_pct = max(0, min(100, int(rec['fit_score'])))
     # major_score는 이미 0~100 정규화된 값 (recommend_universities에서 처리)
@@ -187,4 +221,3 @@ def env_help_panel():
 APP_PASSWORD_HASH=pbkdf2_sha256$240000$<salt_hex>$<hash_hex>""", language='bash')
     st.write('비밀번호 해시는 앱 내부 도구 또는 아래 스크립트로 생성할 수 있습니다.')
     st.code("""python -c "import secrets,hashlib; p='your_password'; s=secrets.token_bytes(16); i=240000; d=hashlib.pbkdf2_hmac('sha256', p.encode(), s, i); print(f'pbkdf2_sha256${i}${s.hex()}${d.hex()}')\"""", language='bash')
-
