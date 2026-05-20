@@ -697,6 +697,210 @@ def summarize_with_gemini(signals: Dict, target_departments: List[str], recs: Li
         pass
     return fallback_summary(signals, target_departments, recs)
 
+def build_recommendation_html(recs: List[Dict],
+                              target_departments: List[str],
+                              signals: Dict,
+                              summary: str,
+                              category_scores: Dict[str, float]) -> str:
+    """
+    추천 카드 화면을 독립 HTML 파일로 직렬화.
+    Streamlit 의존 없이 어떤 브라우저에서도 열림.
+    """
+    import html as _html
+    from datetime import datetime
+
+    def esc(s):
+        return _html.escape(str(s)) if s is not None else ""
+
+    meta = signals.get("report_meta", {}) or {}
+    student = esc(meta.get("student_name") or "학생")
+    today = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # 학생 신호 칩
+    tracks = signals.get("detected_tracks") or []
+    track_label = f"선호 트랙: {', '.join(tracks)}" if tracks else "선호 트랙: 미탐지"
+    target_univ = signals.get('target_university')
+    target_label = f"목표 대학: {target_univ}" if target_univ else "목표 대학: 미탐지"
+    raw_chips = [
+        track_label, target_label,
+        f"전형 성향: {signals.get('admission_orientation', '미탐지')}",
+        '논술/글쓰기 강점' if signals.get('essay_strength') else '논술 강점 미탐지',
+        '영어 강점' if signals.get('english_strength') else '영어 강점 미탐지',
+        '수학 위험 신호' if signals.get('math_risk') else '수학 위험 없음',
+        '과학 위험 신호' if signals.get('science_risk') else '과학 위험 없음',
+        '이공계 적합' if signals.get('sci_track_fit') else None,
+        '인문계 적합' if signals.get('humanities_track_fit') else None,
+        '의·약학 지향' if signals.get('med_track_fit') else None,
+    ]
+    chips_html = "".join(
+        f"<span class='chip'>{esc(c)}</span>" for c in raw_chips if c
+    )
+
+    # 추천 카드들
+    card_blocks = []
+    for i, r in enumerate(recs, start=1):
+        fit = int(round(r.get("fit_score", 0)))
+        major_pct = max(0, min(100, int(r.get("major_score", 0))))
+        talent_pct = max(0, min(100, int(r.get("talent_score", 0))))
+        grade_pct = max(0, min(100, int(r.get("grade_score", 0))))
+        band_pct = max(0, min(100, int(r.get("admission_band_score", 0))))
+        matched = ", ".join(r.get("matched_departments", [])[:5]) or "—"
+        talent_kws = ", ".join(r.get("talent_keywords", [])[:5]) or "—"
+        band = r.get("matched_admission_band") or "—"
+        notes = r.get("notes", "") or ""
+        card_blocks.append(f"""
+        <div class='card'>
+          <div class='card-head'>
+            <div>
+              <div class='rank'>추천 {i}</div>
+              <div class='univ'>{esc(r.get("university"))}</div>
+              <div class='meta'>{esc(r.get("region") or "")} · {esc(r.get("campus") or "단일 캠퍼스")}</div>
+            </div>
+            <div class='pill'>적합도 {fit}</div>
+          </div>
+          <div class='bar-label'>총 적합도</div>
+          <div class='bar'><div class='fill' style='width:{fit}%'></div></div>
+          <div class='bar-label'>학과 일치도</div>
+          <div class='bar'><div class='fill' style='width:{major_pct}%'></div></div>
+          <div class='bar-label'>등급대 적합</div>
+          <div class='bar'><div class='fill' style='width:{band_pct}%'></div></div>
+          <div class='bar-label'>인재상 부합</div>
+          <div class='bar'><div class='fill' style='width:{talent_pct}%'></div></div>
+          <div class='bar-label'>기본 성적</div>
+          <div class='bar'><div class='fill' style='width:{grade_pct}%'></div></div>
+          <div class='kv'><b>일치 학과</b> {esc(matched)}</div>
+          <div class='kv'><b>인재상 키워드</b> {esc(talent_kws)}</div>
+          <div class='kv'><b>매칭 등급대</b> {esc(band)}</div>
+          {"<div class='note'>"+esc(notes)+"</div>" if notes else ""}
+        </div>""")
+
+    cards_html = "\n".join(card_blocks)
+    depts_html = ", ".join(target_departments) or "—"
+
+    # 계열 적합도 Top 5(>0)
+    cat_top = sorted(
+        [(k, v) for k, v in category_scores.items() if v > 0],
+        key=lambda x: -x[1]
+    )[:5]
+    cat_total = sum(v for _, v in cat_top) or 1
+    cat_lis = "".join(
+        f"<li>{esc(k)} <span class='pct'>{int(v/cat_total*100)}%</span></li>"
+        for k, v in cat_top
+    ) or "<li>—</li>"
+
+    css = """
+    :root {
+      --bg-app: #f5f7fb; --bg-card: #ffffff; --bg-panel: #ffffff;
+      --bg-chip: #f1f5f9; --bg-dept-chip: #dbeafe; --bg-bar: #f1f5f9;
+      --bg-note: #f8fafc; --bg-cats-divider: #f1f5f9;
+      --text-primary: #0f172a; --text-body: #334155; --text-meta: #475569;
+      --text-subtle: #64748b; --text-faint: #94a3b8;
+      --text-chip: #334155; --text-dept-chip: #1d4ed8; --accent: #2563eb;
+      --border: #e2e8f0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-app: #0b1220; --bg-card: #1e293b; --bg-panel: #1e293b;
+        --bg-chip: #1e293b; --bg-dept-chip: #1e3a8a; --bg-bar: #334155;
+        --bg-note: #0f172a; --bg-cats-divider: #334155;
+        --text-primary: #f1f5f9; --text-body: #cbd5e1; --text-meta: #94a3b8;
+        --text-subtle: #94a3b8; --text-faint: #64748b;
+        --text-chip: #cbd5e1; --text-dept-chip: #93c5fd; --accent: #60a5fa;
+        --border: #334155;
+      }
+    }
+    body { font-family: -apple-system, 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+           background: var(--bg-app); color: var(--text-primary);
+           padding: 2rem; line-height: 1.55; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { background: linear-gradient(135deg,#0f172a,#1e3a8a,#2563eb); color:white;
+              padding: 1.4rem 1.6rem; border-radius: 18px; margin-bottom: 1.2rem; }
+    .header h1 { margin: 0 0 0.3rem 0; font-size: 1.5rem; color: white; }
+    .header .sub { opacity: 0.85; font-size: 0.9rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.2rem; }
+    .panel { background: var(--bg-panel); border-radius: 14px; padding: 1.1rem 1.2rem;
+             border: 1px solid var(--border); }
+    .panel h3 { margin: 0 0 0.6rem 0; font-size: 0.78rem; color: var(--accent);
+                text-transform: uppercase; letter-spacing: 0.06em; }
+    .chip { display: inline-block; background: var(--bg-chip); color: var(--text-chip);
+            border: 1px solid var(--border); padding: 0.3rem 0.6rem; border-radius: 999px;
+            margin: 0.15rem 0.25rem 0.15rem 0; font-size: 0.83rem; }
+    .dept-chip { background: var(--bg-dept-chip); color: var(--text-dept-chip);
+                 border-color: var(--bg-dept-chip); font-weight: 700; padding: 0.4rem 0.7rem; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+    @media (max-width: 1024px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px;
+            padding: 1rem 1.1rem; }
+    .card-head { display: flex; justify-content: space-between; align-items: flex-start;
+                 gap: 0.6rem; margin-bottom: 0.7rem; }
+    .rank { font-size: 0.7rem; font-weight: 700; color: var(--text-faint);
+            text-transform: uppercase; letter-spacing: 0.05em; }
+    .univ { font-size: 1.05rem; font-weight: 800; color: var(--text-primary); }
+    .meta { font-size: 0.8rem; color: var(--text-faint); margin-top: 0.1rem; }
+    .pill { background: linear-gradient(135deg,#1d4ed8,#3b82f6); color: white;
+            padding: 0.4rem 0.7rem; border-radius: 999px; font-weight: 800;
+            font-size: 0.85rem; white-space: nowrap; }
+    .bar-label { font-size: 0.75rem; color: var(--text-subtle); margin: 0.4rem 0 0.15rem; }
+    .bar { height: 8px; background: var(--bg-bar); border-radius: 999px; overflow: hidden; }
+    .fill { height: 8px; background: linear-gradient(90deg,#93c5fd,#2563eb); border-radius: 999px; }
+    .kv { font-size: 0.82rem; color: var(--text-meta); margin-top: 0.45rem; }
+    .kv b { color: var(--text-primary); margin-right: 0.3rem; }
+    .note { font-size: 0.8rem; color: var(--text-subtle); margin-top: 0.5rem;
+            background: var(--bg-note); padding: 0.4rem 0.55rem; border-radius: 8px; }
+    .summary { font-size: 0.92rem; line-height: 1.7; color: var(--text-body); }
+    ul.cats { list-style: none; padding: 0; margin: 0; }
+    ul.cats li { padding: 0.3rem 0; border-bottom: 1px solid var(--bg-cats-divider);
+                 font-size: 0.88rem; display: flex; justify-content: space-between;
+                 color: var(--text-body); }
+    .pct { color: var(--accent); font-weight: 700; }
+    .footer { text-align: center; color: var(--text-faint); font-size: 0.8rem; margin-top: 1.2rem; }
+    """
+
+    return f"""<!DOCTYPE html>
+<html lang='ko'>
+<head>
+<meta charset='UTF-8'>
+<title>대학 추천 결과 — {student}</title>
+<style>{css}</style>
+</head>
+<body>
+  <div class='container'>
+    <div class='header'>
+      <h1>🎓 대학 추천 결과 — {student}</h1>
+      <div class='sub'>생성 시각: {today} · MOS Consulting · CollegeMatching</div>
+    </div>
+
+    <div class='row'>
+      <div class='panel'>
+        <h3>우선 추천 학과</h3>
+        <div>{"".join(f"<span class='chip dept-chip'>{esc(d)}</span>" for d in target_departments) or "<span class='chip'>—</span>"}</div>
+        <h3 style='margin-top:1rem;'>학생 신호</h3>
+        <div>{chips_html}</div>
+      </div>
+      <div class='panel'>
+        <h3>요약 분석</h3>
+        <div class='summary'>{esc(summary)}</div>
+        <h3 style='margin-top:1rem;'>계열 적합도 (상위)</h3>
+        <ul class='cats'>{cat_lis}</ul>
+      </div>
+    </div>
+
+    <h3 style='font-size:0.78rem; color:var(--accent); text-transform:uppercase;
+              letter-spacing:0.06em; margin-bottom:0.6rem;'>추천 대학</h3>
+    <div class='grid'>
+      {cards_html}
+    </div>
+
+    <div class='footer'>
+      적합도 = (학과 0.50 + 등급대 0.23 + 인재상 0.15 + 성적 0.12) + 보너스(최대 25점),
+      100점 상한 · 결정론적 산출
+    </div>
+  </div>
+</body>
+</html>"""
+
+
 def main():
     st.set_page_config(
         page_title='학생 HTML 기반 대학 추천기',
@@ -836,7 +1040,12 @@ def main():
         with m4:
             render_metric_card('전형 적합도', signals.get('admission_preference') or '미탐지', '전형 서술 또는 수시/정시 응답을 반영합니다.')
 
-        left, right = st.columns([1.05, 1.35])
+        # ── 상단: 학생 분석 영역 (좌우 2열) ─────────────────────
+        st.markdown(
+            "<div class='section-title' style='margin-top:1rem;'>학생 분석</div>",
+            unsafe_allow_html=True
+        )
+        left, right = st.columns([1, 1], gap="medium")
         with left:
             render_chip_row('우선 추천 학과', target_departments, dept=True)
             render_chip_row('핵심 키워드', signals.get('top_keywords', [])[:12])
@@ -865,21 +1074,59 @@ def main():
             student_signals = [s for s in student_signals if s]
             render_chip_row('학생 신호', student_signals)
 
-            st.markdown(f"<div class='glass-card'><div class='section-title'>요약 분석</div><div class='subtle' style='font-size:0.96rem; line-height:1.7; color:#334155;'>{summary}</div></div>", unsafe_allow_html=True)
-
-            # ── 계열 적합도 (원그래프) ────────────────────────
+        with right:
+            st.markdown(
+                f"<div class='glass-card'><div class='section-title'>요약 분석</div>"
+                f"<div class='subtle' style='font-size:0.96rem; line-height:1.7; color:var(--text-body);'>{summary}</div></div>",
+                unsafe_allow_html=True
+            )
+            # 계열 적합도 (원그래프) — 좌측 칩 묶음과 높이 균형 맞추기 좋음
             render_category_donut(category_scores)
 
-        with right:
-            st.markdown("<div class='section-title'>추천 대학</div>", unsafe_allow_html=True)
-            with st.expander("적합도 점수 산출 방식 안내", expanded=False):
-                render_score_methodology()
-            if not target_departments:
-                st.warning("HTML에서 추천용 학과 후보를 충분히 구성하지 못했습니다. 키워드 사전 또는 최종 결론 반영 규칙을 점검해야 합니다.")
-            elif not recs: 
-                st.warning("추천 학과 후보는 추출되었지만, 현재 DB 학과명과의 매칭이 충분하지 않아 대학 추천이 생성되지 않았습니다.")
-            for i, rec in enumerate(recs, start=1):
-                render_university_card(rec, i)
+        # ── 하단: 추천 대학 ─────────────────────────────────────
+        st.markdown(
+            "<div class='section-title' style='margin-top:1.5rem;'>추천 대학</div>",
+            unsafe_allow_html=True
+        )
+        with st.expander("적합도 점수 산출 방식 안내", expanded=False):
+            render_score_methodology()
+
+        if not target_departments:
+            st.warning("HTML에서 추천용 학과 후보를 충분히 구성하지 못했습니다. 키워드 사전 또는 최종 결론 반영 규칙을 점검해야 합니다.")
+        elif not recs:
+            st.warning("추천 학과 후보는 추출되었지만, 현재 DB 학과명과의 매칭이 충분하지 않아 대학 추천이 생성되지 않았습니다.")
+        else:
+            # 모니터 가독성: 가로 그리드 배치 (3 + 나머지 줄바꿈)
+            row_size = 3
+            for row_start in range(0, len(recs), row_size):
+                row = recs[row_start:row_start + row_size]
+                # 같은 행의 카드 수에 맞춰 컬럼 수 조정 (마지막 행이 짧아도 카드 폭 유지)
+                cols = st.columns(row_size)
+                for col_i, rec in enumerate(row):
+                    with cols[col_i]:
+                        render_university_card(rec, row_start + col_i + 1)
+                # 마지막 행이 row_size 미만이면 남은 컬럼은 빈 채로 둠 → 카드 폭 일정
+
+            # ── HTML 저장 버튼 ─────────────────────────────────
+            st.markdown(
+                "<div style='margin-top:1.2rem;'></div>",
+                unsafe_allow_html=True
+            )
+            html_blob = build_recommendation_html(
+                recs=recs,
+                target_departments=target_departments,
+                signals=signals,
+                summary=summary,
+                category_scores=category_scores,
+            )
+            student_name_hint = (signals.get("report_meta", {}) or {}).get("student_name") or "학생"
+            st.download_button(
+                label="📥 추천 카드 화면을 HTML 파일로 저장",
+                data=html_blob.encode("utf-8"),
+                file_name=f"추천대학_{student_name_hint}.html",
+                mime="text/html",
+                width='stretch',
+            )
 
         with st.expander('세부 추출 정보', expanded=False):
             st.json({
