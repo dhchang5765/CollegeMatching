@@ -163,6 +163,51 @@ def build_student_profile_text(signals: Dict, answer_result: Optional[Dict] = No
     return " · ".join(p for p in parts if p) or "탐구 학습"
 
 
+def compute_talent_similarities_normalized(student_text: str,
+                                            universities: List[Dict]) -> Dict[str, float]:
+    """
+    학생 1명에 대한 모든 대학의 인재상 유사도를 한 번에 계산하고
+    percentile 기반 상대 점수(30~95)로 변환한다.
+
+    절대 코사인 값(0.05~0.25 범위)을 100점 스케일에 그대로 매핑하면
+    모든 대학이 낮은 점수만 받는 문제가 있다. 대신 '이 학생에게 어느
+    대학이 상대적으로 더 적합한가'를 후보 대학 내 순위로 환산한다.
+
+    반환: { univ_name: score(30~95) }
+    """
+    if not universities or not student_text:
+        return {}
+    s_emb_list = embed_texts([student_text])
+    if not s_emb_list:
+        return {}
+    s_emb = s_emb_list[0]
+
+    sims: List[tuple] = []
+    for u in universities:
+        name = u.get("name", "")
+        kws = u.get("talent_keywords", []) or []
+        if not kws:
+            sims.append((name, 0.0))
+            continue
+        u_emb = get_university_embedding(name, kws)
+        if u_emb is None:
+            sims.append((name, 0.0))
+            continue
+        sims.append((name, cosine(s_emb, u_emb)))
+
+    if not sims:
+        return {}
+    sorted_sims = sorted(sims, key=lambda x: x[1])
+    n = len(sorted_sims)
+    if n == 1:
+        return {sorted_sims[0][0]: 70.0}
+    scores: Dict[str, float] = {}
+    for rank, (name, _) in enumerate(sorted_sims):
+        percentile = rank / (n - 1)  # 0.0 (최저) ~ 1.0 (최고)
+        scores[name] = round(30.0 + percentile * 65.0, 2)
+    return scores
+
+
 def talent_similarity(student_text: str, univ_name: str,
                        talent_keywords: List[str]) -> Tuple[float, str]:
     """

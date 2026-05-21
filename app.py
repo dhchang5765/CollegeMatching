@@ -167,11 +167,18 @@ def extract_example_specific_signals(html_text: str) -> Dict:
     text_for_keywords = focused_text if focused_text.strip() else raw_text
     lines = [ln.strip() for ln in re.split(r"[.!?]", text_for_keywords) if ln.strip()]
 
-    # 학생 본인 이름은 키워드에서 동적으로 제외
+    # 학생 본인 이름은 키워드에서 동적으로 제외 (조사 결합형 포함)
     student_name = meta.get("student_name") if isinstance(meta, dict) else None
-    extra_stop = {student_name} if student_name else set()
+    extra_stop = set()
+    if student_name:
+        extra_stop.add(student_name)
+        # 이혜진의·이혜진은·이혜진이 같은 조사 결합형도 함께 제외
+        for particle in ["은", "는", "이", "가", "을", "를", "의", "에", "도", "만"]:
+            extra_stop.add(student_name + particle)
+        for particle in ["에서", "에게", "으로", "처럼", "까지"]:
+            extra_stop.add(student_name + particle)
     top_keywords_all = extract_keywords_kiwi(text_for_keywords, top_n=60)
-    top_keywords = [k for k in top_keywords_all if k not in extra_stop][:40]
+    top_keywords = [k for k in top_keywords_all if k not in extra_stop][:25]
 
     # 4) 전체 텍스트에서 등급 후보 수집 (raw_text 전체 사용 — 시뮬레이션/카드 영역의 등급도 포함)
     grade_candidates = collect_all_floats(raw_text, SPECIAL_PATTERNS["grade"])
@@ -288,19 +295,6 @@ def extract_example_specific_signals(html_text: str) -> Dict:
         "simulation": simulation,
         "final_conclusion": final_conclusion,
     }
-
-def get_diag10_text(signals: Dict) -> str:
-    for d in signals.get("diagnosis_sections", []):
-        if d.get("diag_no") == 10:
-            parts = [
-                d.get("title", ""),
-                d.get("banner_title", ""),
-                d.get("prose_text", ""),
-                " ".join(d.get("direct_quotes", [])),
-                " ".join(d.get("banner_tags", [])),
-            ]
-            return " ".join([p for p in parts if p])
-    return ""
 
 def normalize_subject(v: Optional[float]) -> float:
     if v is None:
@@ -533,6 +527,79 @@ def choose_target_departments(signals: Dict, category_scores: Dict[str, float], 
     ranked = sorted(dept_scores.items(), key=lambda x: (-x[1], x[0]))
     return [dept for dept, _ in ranked[:max_n]]
 
+def career_match_score(target_departments: List[str], university: Dict) -> Tuple[float, int]:
+    """
+    진로 일치도: 학생 추천 학과 1·2·3순위가 그 대학에 있는지 우선순위 가중.
+    1순위 매칭 = 50점, 2순위 = 30점, 3순위 = 20점 → 합 최대 100점.
+    학과명 매칭은 별칭(DEPT_ALIAS)을 통한 유연 매칭.
+    """
+    if not target_departments:
+        return 0.0, 0
+
+    from constants import DEPT_ALIAS
+    weights = [50.0, 30.0, 20.0]  # 1·2·3순위 가중치
+    score = 0.0
+    matched_count = 0
+
+    dept_names = []
+    for dept in university.get("departments", []):
+        n = dept.get("name", "")
+        if n:
+            dept_names.append(n)
+            for alias in dept.get("aliases", []):
+                dept_names.append(alias)
+
+    for rank, target in enumerate(target_departments[:3]):
+        # 별칭까지 포함한 매칭
+        target_aliases = [target] + list(DEPT_ALIAS.get(target, []))
+        for n in dept_names:
+            if any(a in n or n in a for a in target_aliases):
+                score += weights[rank]
+                matched_count += 1
+                break  # 한 순위당 1개만 카운트
+    return min(100.0, score), matched_count
+
+
+def track_match_score(track_recs: Optional[List[Dict]], university: Dict,
+                       dep_match: Optional[Dict]) -> float:
+    """
+    전형 적합도: 학생의 추천 전형 Top1 점수를 기반으로,
+    그 대학의 admissions 트랙에 해당 전형이 있으면 100% 반영, 없으면 70%만.
+    """
+    if not track_recs:
+        return 55.0
+    top_track = track_recs[0]
+    student_track_id = top_track.get("id", "")
+    student_score = float(top_track.get("score", 0))
+
+    # 대학 admissions 트랙 명에서 해당 전형 식별
+    track_keyword_map = {
+        "haksang": ["학종", "학생부종합", "종합"],
+        "gyogwa":  ["교과", "학생부교과"],
+        "nonsul":  ["논술"],
+        "jeongsi": ["정시", "수능"],
+        "balanced":["지역균형", "학교장추천", "고른기회"],
+        "regional":["지역인재"],
+        "teukgi":  ["특기자", "실기"],
+    }
+    target_kws = track_keyword_map.get(student_track_id, [])
+    if not target_kws:
+        return student_score * 0.85
+
+    # 대학 학과의 admissions 에서 매칭 트랙 검색
+    has_track = False
+    for dept in university.get("departments", []):
+        for adm in dept.get("admissions", []):
+            tname = (adm.get("track_name") or "") + " " + (adm.get("type") or "")
+            if any(k in tname for k in target_kws):
+                has_track = True
+                break
+        if has_track:
+            break
+
+    return student_score if has_track else student_score * 0.7
+
+
 def major_match_score(target_departments: List[str], university: Dict) -> Tuple[float, List[str]]:
     score = 0.0
     matched = []
@@ -567,17 +634,6 @@ def major_match_score(target_departments: List[str], university: Dict) -> Tuple[
                     break
 
     return score, list(dict.fromkeys(matched))
-
-
-def keyword_fit_score(signals: Dict, talent_keywords: List[str]) -> float:
-    text = signals['raw_text']
-    hits = sum(1 for kw in talent_keywords if kw in text)
-    base = 40 + hits * 10
-    if signals.get('admission_preference') == '학생부종합' and any(k in talent_keywords for k in ['창의', '소통', '실천', '리더십', '융합']):
-        base += 8
-    if signals.get('is_student_record_heavy') and any(k in talent_keywords for k in ['표현', '실천', '창의']):
-        base += 6
-    return base
 
 
 def talent_fit_score_v2(signals: Dict, univ_name: str,
@@ -646,61 +702,100 @@ def target_bonus(university_name: str, signals: Dict) -> float:
 
 def recommend_universities(db: Dict, signals: Dict, target_departments: List[str],
                             top_n: int = 5,
-                            answer_result: Optional[Dict] = None) -> List[Dict]:
-    recs = []
+                            answer_result: Optional[Dict] = None,
+                            track_recs: Optional[List[Dict]] = None) -> List[Dict]:
+    """
+    새 적합도 산출 (4축 + 보너스):
+      - 합격선 적합도 35% (객관)
+      - 진로 일치도 25% (학생 추천 학과 1·2·3 우선순위 가중)
+      - 전형 적합도 25% (학생 추천 전형 × 대학 트랙 가용성)
+      - 인재상 유사도 15% (상대 percentile 임베딩)
+      - 보너스 최대 +25 (목표대학 가산)
+      - 100점 상한
+    """
     overall_grade = signals.get("overall_grade")
-    gscore = grade_fit_score(overall_grade)
 
+    # 1) 후보 대학 필터링 (학과 매칭 0인 대학 제외)
+    candidates = []
     for u in db.get("universities", []):
         mscore_raw, matched = major_match_score(target_departments, u)
         if mscore_raw <= 0:
             continue
+        candidates.append((u, mscore_raw, matched))
 
-        tscore, talent_backend = talent_fit_score_v2(
-            signals, u.get("name", ""), u.get("talent_keywords", []), answer_result
-        )
-        bonus = target_bonus(u.get("name", ""), signals)
+    if not candidates:
+        return []
 
+    # 2) 인재상 유사도 — 학생 1명에 대해 모든 후보 대학 한 번에 percentile 계산
+    from embeddings import (
+        compute_talent_similarities_normalized,
+        build_student_profile_text,
+    )
+    student_profile = build_student_profile_text(signals, answer_result)
+    talent_scores_map = compute_talent_similarities_normalized(
+        student_profile, [u for u, _, _ in candidates]
+    )
+    talent_backend_used = "embedding(percentile)" if talent_scores_map else "keyword(fallback)"
+
+    # 3) 각 대학 점수 산출
+    recs = []
+    for u, mscore_raw, matched in candidates:
+        univ_name = u.get("name", "")
+
+        # ── 4축 적합도 ───────────────────────────────
+        # (A) 합격선 적합도 (35%)
         band, dep_match = extract_best_admission_band(u, target_departments)
-        bscore = admission_band_score(overall_grade, band)
+        band_score = admission_band_score(overall_grade, band)
 
+        # (B) 진로 일치도 (25%) — 추천 학과 1·2·3 우선순위 가중
+        career_score, career_matched_count = career_match_score(target_departments, u)
+
+        # (C) 전형 적합도 (25%)
+        trk_score = track_match_score(track_recs, u, dep_match)
+
+        # (D) 인재상 유사도 (15%) — percentile 상대 점수
+        if talent_scores_map and univ_name in talent_scores_map:
+            talent_score = talent_scores_map[univ_name]
+        else:
+            # 임베딩 미가용 시 키워드 부분 일치 fallback (절대값)
+            from embeddings import talent_similarity
+            talent_score, _ = talent_similarity(
+                student_profile, univ_name, u.get("talent_keywords", []) or []
+            )
+
+        # ── 보너스 (최대 +25) ────────────────────────
+        bonus = target_bonus(univ_name, signals)  # 목표 대학 가산
+
+        # 진로 클러스터 일치 보너스 (의약학 지망 → 의예과 보유 대학 등)
         fitcluster_bonus = 0.0
         fitcluster = (dep_match or {}).get("fitcluster")
         if fitcluster:
-            top_cats = sorted(infer_category_scores(signals).items(), key=lambda x: x[1], reverse=True)[:2]
+            top_cats = sorted(infer_category_scores(signals).items(),
+                              key=lambda x: x[1], reverse=True)[:2]
             top_fitclusters = []
             for cat, _ in top_cats:
                 top_fitclusters.extend(CATEGORY_TO_FITCLUSTER.get(cat, []))
             if fitcluster in top_fitclusters:
-                fitcluster_bonus += 8.0
+                fitcluster_bonus = 8.0
 
-        # ── 알고리즘 개선 ──
-        # 1) mscore 정규화 (0~100 스케일)
-        #    - 학과당 30점이 최대인데, 1개 학과 매칭만으로도 60점 이상 받도록 곡선 강화
-        #    - sqrt 변환으로 1~3개 매칭의 차이를 완만하게 보정
-        import math
-        mscore_norm = min(100.0, math.sqrt(mscore_raw) * 14.0)
+        # 다수 학과 매칭 보너스 (2개 이상 매칭 시)
+        multi_match_bonus = 5.0 if career_matched_count >= 2 else 0.0
 
-        # 2) 가중치 재조정 (합 1.0 유지, 학과 일치도 비중 확대)
-        #    학과 매칭 50% + 등급 23% + 인재상 15% + 성적 12%
+        # 최종 산출
         base_score = (
-            mscore_norm * 0.50 +
-            bscore      * 0.23 +
-            tscore      * 0.15 +
-            gscore      * 0.12
+            band_score   * 0.35 +
+            career_score * 0.25 +
+            trk_score    * 0.25 +
+            talent_score * 0.15
         )
-
-        # 3) 보너스는 base 위에 가산 (최대 +25점)
-        bonus_total = min(25.0, fitcluster_bonus + bonus)
-
-        # 4) 최종: base에 보너스 더하되 100점 상한
+        bonus_total = min(25.0, bonus + fitcluster_bonus + multi_match_bonus)
         total = round(min(100.0, base_score + bonus_total), 2)
 
-        # A2: 지원군 분류 (상향/적정/안정)
+        # A2: 지원군 분류
         support_level, support_reason = classify_support_level(overall_grade, band)
 
         recs.append({
-            "university": u.get("name"),
+            "university": univ_name,
             "region": u.get("region"),
             "campus": u.get("campus"),
             "fit_score": total,
@@ -708,21 +803,72 @@ def recommend_universities(db: Dict, signals: Dict, target_departments: List[str
             "talent_keywords": u.get("talent_keywords", []),
             "notes": u.get("notes", ""),
             "target_bonus": bonus,
-            "major_score": round(mscore_norm, 1),
-            "major_score_raw": round(mscore_raw, 1),
-            "talent_score": round(tscore, 1),
-            "talent_backend": talent_backend,
-            "grade_score": round(gscore, 1),
-            "admission_band_score": round(bscore, 1),
+            # 새 4축 점수
+            "band_score": round(band_score, 1),
+            "career_score": round(career_score, 1),
+            "track_score": round(trk_score, 1),
+            "talent_score": round(talent_score, 1),
+            "talent_backend": talent_backend_used,
+            "career_matched_count": career_matched_count,
             "matched_admission_band": band,
             "matched_department_detail": dep_match,
             "fitcluster_bonus": fitcluster_bonus,
+            "multi_match_bonus": multi_match_bonus,
             "support_level": support_level,
             "support_reason": support_reason,
         })
 
     recs.sort(key=lambda x: x["fit_score"], reverse=True)
-    return recs[:top_n]
+    return _distribute_by_support_level(recs, total=top_n)
+
+
+def _distribute_by_support_level(scored_recs: List[Dict], total: int = 5) -> List[Dict]:
+    """
+    한국 입시 컨설팅 표준 분배 (안정 1 + 적정 2 + 상향 2 = 5).
+    fit_score 내림차순으로 정렬된 입력을 받아 지원군별로 의도적으로 분배한다.
+
+    원칙
+    - 분배 목표(plan)를 우선 채움
+    - 특정 그룹이 비면 fallback 순서에 따라 인접 그룹에서 보충
+    - 최종 결과는 fit_score 내림차순으로 다시 정렬해 카드 순서 유지
+    """
+    if not scored_recs:
+        return []
+
+    # 지원군별 목표 개수 (한국 입시 컨설팅 표준 비율)
+    plan = {"안정": 1, "적정": 2, "상향": 2}
+
+    # 그룹화 (이미 fit_score 내림차순)
+    groups: Dict[str, List[Dict]] = {}
+    for r in scored_recs:
+        lv = r.get("support_level") or "정보부족"
+        groups.setdefault(lv, []).append(r)
+
+    selected: List[Dict] = []
+    # 1단계: plan 그대로 채움
+    for lv, n in plan.items():
+        if lv in groups:
+            picks = groups[lv][:n]
+            selected.extend(picks)
+            groups[lv] = groups[lv][n:]
+
+    # 2단계: 부족분을 fallback 순서로 채움
+    # 적정 > 상향 > 상향(도전) > 안정 > 재고 > 정보부족 순
+    fallback_order = ["적정", "상향", "상향(도전)", "안정", "재고", "정보부족"]
+    while len(selected) < total:
+        added = False
+        for lv in fallback_order:
+            if lv in groups and groups[lv]:
+                selected.append(groups[lv].pop(0))
+                added = True
+                if len(selected) >= total:
+                    break
+        if not added:
+            break  # 더 채울 후보가 없음
+
+    # 최종 정렬: fit_score 내림차순
+    selected.sort(key=lambda x: -x.get("fit_score", 0))
+    return selected[:total]
 
 
 def fallback_summary(signals: Dict, target_departments: List[str], recs: List[Dict]) -> str:
@@ -804,19 +950,19 @@ def build_recommendation_html(recs: List[Dict],
     card_blocks = []
     for i, r in enumerate(recs, start=1):
         fit = int(round(r.get("fit_score", 0)))
-        major_pct = max(0, min(100, int(r.get("major_score", 0))))
+        band_pct = max(0, min(100, int(r.get("band_score", 0))))
+        career_pct = max(0, min(100, int(r.get("career_score", 0))))
+        track_pct = max(0, min(100, int(r.get("track_score", 0))))
         talent_pct = max(0, min(100, int(r.get("talent_score", 0))))
-        grade_pct = max(0, min(100, int(r.get("grade_score", 0))))
-        band_pct = max(0, min(100, int(r.get("admission_band_score", 0))))
-        matched = ", ".join(r.get("matched_departments", [])[:5]) or "—"
         talent_kws = ", ".join(r.get("talent_keywords", [])[:5]) or "—"
         band = r.get("matched_admission_band") or "—"
         notes = r.get("notes", "") or ""
+        support = r.get("support_level") or ""
         card_blocks.append(f"""
         <div class='card'>
           <div class='card-head'>
             <div>
-              <div class='rank'>추천 {i}</div>
+              <div class='rank'>추천 {i} {('· ' + esc(support)) if support else ''}</div>
               <div class='univ'>{esc(r.get("university"))}</div>
               <div class='meta'>{esc(r.get("region") or "")} · {esc(r.get("campus") or "단일 캠퍼스")}</div>
             </div>
@@ -824,15 +970,14 @@ def build_recommendation_html(recs: List[Dict],
           </div>
           <div class='bar-label'>총 적합도</div>
           <div class='bar'><div class='fill' style='width:{fit}%'></div></div>
-          <div class='bar-label'>학과 일치도</div>
-          <div class='bar'><div class='fill' style='width:{major_pct}%'></div></div>
-          <div class='bar-label'>등급대 적합</div>
+          <div class='bar-label'>합격선 적합도 (35%)</div>
           <div class='bar'><div class='fill' style='width:{band_pct}%'></div></div>
-          <div class='bar-label'>인재상 부합</div>
+          <div class='bar-label'>진로 일치도 (25%)</div>
+          <div class='bar'><div class='fill' style='width:{career_pct}%'></div></div>
+          <div class='bar-label'>전형 적합도 (25%)</div>
+          <div class='bar'><div class='fill' style='width:{track_pct}%'></div></div>
+          <div class='bar-label'>인재상 유사도 (15%)</div>
           <div class='bar'><div class='fill' style='width:{talent_pct}%'></div></div>
-          <div class='bar-label'>기본 성적</div>
-          <div class='bar'><div class='fill' style='width:{grade_pct}%'></div></div>
-          <div class='kv'><b>일치 학과</b> {esc(matched)}</div>
           <div class='kv'><b>인재상 키워드</b> {esc(talent_kws)}</div>
           <div class='kv'><b>매칭 등급대</b> {esc(band)}</div>
           {"<div class='note'>"+esc(notes)+"</div>" if notes else ""}
@@ -957,7 +1102,7 @@ def build_recommendation_html(recs: List[Dict],
     </div>
 
     <div class='footer'>
-      적합도 = (학과 0.50 + 등급대 0.23 + 인재상 0.15 + 성적 0.12) + 보너스(최대 25점),
+      적합도 = (합격선 0.35 + 진로 0.25 + 전형 0.25 + 인재상 0.15) + 보너스(최대 25점),
       100점 상한 · 결정론적 산출
     </div>
   </div>
@@ -1047,10 +1192,12 @@ def main():
             )
             dec_scores = answer_result["decision"]["category_scores"]
             if dec_scores:
-                # 답변 JSON은 학생이 직접 응답한 1차 신호이므로 HTML 추정보다 신뢰도가 높다.
-                # 가중치 2.0 적용 → 답변 신호가 강할 때 HTML 점수 편향을 극복할 수 있게 한다.
-                ANSWER_WEIGHT = 2.0
-                merged = dict(category_scores)
+                # HTML 보고서는 AI가 학생 답변을 재가공한 2차 산출물이므로 과해석 위험.
+                # 답변 JSON 은 학생의 1인칭 직접 응답이라 더 신뢰도가 높다.
+                # → 답변 점수 가중치를 강하게 적용하고, HTML 점수는 절반으로 약화.
+                ANSWER_WEIGHT = 3.0   # 답변 JSON 가중치 (HTML 대비 6배 영향)
+                HTML_DAMPENING = 0.5  # 답변 JSON 있을 때 HTML 점수 약화
+                merged = {cat: v * HTML_DAMPENING for cat, v in category_scores.items()}
                 for cat, v in dec_scores.items():
                     merged[cat] = merged.get(cat, 0.0) + v * ANSWER_WEIGHT
                 category_scores = merged
@@ -1067,6 +1214,29 @@ def main():
                     except Exception:
                         pass
 
+            # 답변 JSON 의 신호(강·약점 과목, 비교과·자기주도성)를 signals 에 동기화.
+            # 로드맵 갭 분석 + 전형 추천이 더 정확하게 작동하도록 보강.
+            rs = answer_result.get("rule_signals", {}) or {}
+            answer_strong = set(rs.get("strong_subjects") or [])
+            answer_weak = set(rs.get("weak_subjects") or [])
+            if answer_weak:
+                if any(s in answer_weak for s in ["수학"]):
+                    signals["math_risk"] = True
+                if any(s in answer_weak for s in ["과학", "물리", "화학", "생명과학", "지구과학", "탐구"]):
+                    signals["science_risk"] = True
+                if "영어" not in answer_strong and "영어" in answer_weak:
+                    signals["english_strength"] = False
+            if "국어" in answer_strong:
+                signals["essay_strength"] = True
+            # 답변 클러스터로 진로 적합 신호도 보강
+            ac = set(rs.get("career_clusters") or [])
+            if "의약학" in ac:
+                signals["med_track_fit"] = True
+            if any(c in ac for c in ["컴퓨터·AI", "공학", "수리·통계"]):
+                signals["sci_track_fit"] = True
+            if any(c in ac for c in ["미디어·콘텐츠", "인문·언어", "사회·정치"]):
+                signals["humanities_media_fit"] = True
+
             st.success(
                 f"HTML + 답변 JSON 결합 분석 (질문지 {answer_result['version']}, "
                 f"{answer_result['n_questions']}문항). "
@@ -1076,9 +1246,16 @@ def main():
         except Exception as e:
             st.warning(f"답변 JSON 처리 실패 — HTML 신호만 사용합니다: {e}")
 
-        target_departments = choose_target_departments(signals, category_scores, max_n=2)
+        target_departments = choose_target_departments(signals, category_scores, max_n=3)
+
+        # 추천 전형은 추천 대학 점수 산출에도 사용되므로 먼저 계산
+        from admission_tracks import recommend_tracks, detect_student_region
+        track_recs = recommend_tracks(signals, answer_result)
+        student_area = detect_student_region(signals)
+
         recs = recommend_universities(db, signals, target_departments, top_n=5,
-                                       answer_result=answer_result)
+                                       answer_result=answer_result,
+                                       track_recs=track_recs)
         summary = summarize_with_gemini(signals, target_departments, recs)
 
         # 답변 파이프라인 상세(설명가능성·거버넌스)
@@ -1111,16 +1288,6 @@ def main():
                     st.json(dec["audit_trail"][:40])
 
 
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            render_metric_card('추천 학과 수', str(len(target_departments)), '요청 조건에 맞춰 최대 2개까지 제시합니다.')
-        with m2:
-            render_metric_card('추천 대학 수', str(len(recs)), '추천 결과는 최대 5개 대학까지 노출합니다.')
-        with m3:
-            render_metric_card('추정 전체 등급', str(signals.get('overall_grade') or '-'), '리포트 또는 답변에서 탐지한 대표 등급 값입니다.')
-        with m4:
-            render_metric_card('전형 적합도', signals.get('admission_preference') or '미탐지', '전형 서술 또는 수시/정시 응답을 반영합니다.')
-
         # ── 상단: 학생 분석 영역 (좌우 2열) ─────────────────────
         st.markdown(
             "<div class='section-title' style='margin-top:1rem;'>학생 분석</div>",
@@ -1129,9 +1296,9 @@ def main():
         left, right = st.columns([1, 1], gap="medium")
         with left:
             render_chip_row('우선 추천 학과', target_departments, dept=True)
-            render_chip_row('핵심 키워드', signals.get('top_keywords', [])[:12])
+            render_chip_row('핵심 키워드', signals.get('top_keywords', [])[:8])
 
-            # ── 학생 신호 ─────────────────────────────────────
+            # ── 학생 신호 (3개 핵심 정보만) ─────────────────────
             tracks = signals.get("detected_tracks") or []
             track_label = f"선호 트랙: {', '.join(tracks)}" if tracks else "선호 트랙: 미탐지"
             target_univ = signals.get('target_university')
@@ -1140,19 +1307,8 @@ def main():
             student_signals = [
                 track_label,
                 target_label,
-                f"전형 성향: {signals.get('admission_orientation', '미탐지')}",
-                '논술/글쓰기 강점' if signals.get('essay_strength') else '논술 강점 미탐지',
-                '영어 강점' if signals.get('english_strength') else '영어 강점 미탐지',
-                '수학 위험 신호' if signals.get('math_risk') else '수학 위험 없음',
-                '과학 위험 신호' if signals.get('science_risk') else '과학 위험 없음',
-                '인문·미디어 적합' if signals.get('humanities_media_fit') else '인문·미디어 약함',
-                '이공계 적합' if signals.get('sci_track_fit') else None,
-                '인문계 적합' if signals.get('humanities_track_fit') else None,
-                '의·약학 지향' if signals.get('med_track_fit') else None,
-                '비교과 활동 충실' if signals.get('extracurricular_strong') else None,
-                '자기주도성 강함' if signals.get('self_directed') else None,
+                f"전형 선호 성향: {signals.get('admission_orientation', '미탐지')}",
             ]
-            student_signals = [s for s in student_signals if s]
             render_chip_row('학생 신호', student_signals)
 
         with right:
@@ -1165,9 +1321,6 @@ def main():
             render_category_donut(category_scores)
 
         # ── 중간: 추천 전형 (A3) ────────────────────────────────
-        from admission_tracks import recommend_tracks, detect_student_region
-        track_recs = recommend_tracks(signals, answer_result)
-        student_area = detect_student_region(signals)
         render_track_recommendations(track_recs, student_area)
 
         # ── 하단: 추천 대학 ─────────────────────────────────────
@@ -1203,6 +1356,10 @@ def main():
                     for col_i, rec in enumerate(row):
                         with cols[col_i]:
                             render_university_card(rec, global_rank)
+                            # 학습 갭 로드맵 (펼침 패널)
+                            from roadmap import build_roadmap
+                            roadmap = build_roadmap(rec, signals, answer_result, track_recs)
+                            render_roadmap_panel(roadmap, rec['university'])
                             global_rank += 1
 
             # ── HTML 저장 버튼 ─────────────────────────────────

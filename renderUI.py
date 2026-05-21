@@ -243,6 +243,116 @@ def render_chip_row(title: str, items: List[str], dept: bool = False):
     st.markdown(f"<div class='glass-card'><div class='section-title'>{title}</div>{chips if chips else empty}</div>", unsafe_allow_html=True)
 
 
+def render_roadmap_panel(roadmap: Dict, univ_name: str):
+    """대학 카드 안에 펼침 패널로 로드맵 표시."""
+    if not roadmap:
+        return
+    grade_level = roadmap.get("grade_level") or "학년 미확정"
+    gaps = roadmap.get("gaps", {})
+    schedule = roadmap.get("schedule", [])
+    actions = roadmap.get("actions", [])
+    timeline = roadmap.get("timeline", {})
+
+    # 갭 요약 배지
+    gap_chips = []
+    sev = gaps.get("grade_severity")
+    if sev == "safe":
+        gap_chips.append(("등급 안전", "#16a34a"))
+    elif sev == "small":
+        gap_chips.append((f"등급 갭 {gaps.get('grade_gap')}", "#ea580c"))
+    elif sev == "medium":
+        gap_chips.append((f"등급 갭 {gaps.get('grade_gap')} (중간)", "#dc2626"))
+    elif sev == "large":
+        gap_chips.append((f"등급 갭 {gaps.get('grade_gap')} (큼)", "#991b1b"))
+    if gaps.get("talent_gap") and gaps["talent_gap"] > 0.5:
+        gap_chips.append((f"인재상 미매칭 {int(gaps['talent_gap']*100)}%", "#7c3aed"))
+    if gaps.get("track_top_label"):
+        gap_chips.append((f"우선 전형: {gaps['track_top_label']}", "#1d4ed8"))
+
+    gap_chip_html = "".join(
+        f"<span style='background:{c}22; color:{c}; border:1px solid {c}55; "
+        f"padding:0.2rem 0.55rem; border-radius:999px; font-size:0.78rem; "
+        f"font-weight:700; margin:0.15rem 0.2rem 0.15rem 0;'>{txt}</span>"
+        for txt, c in gap_chips
+    ) or "<span class='subtle'>갭 정보 부족</span>"
+
+    # 분기별 스케줄 — 분기 라벨로 그룹화
+    by_quarter: Dict[str, List[Dict]] = {}
+    for s in schedule:
+        by_quarter.setdefault(s["quarter_label"], []).append(s)
+
+    quarter_html_blocks = []
+    for q_info in timeline.get("quarters", []):
+        q_label = q_info["label"]
+        items = by_quarter.get(q_label, [])
+        if not items:
+            continue
+        action_lines = "".join(
+            f"<li style='font-size:0.85rem; color:var(--text-body); "
+            f"margin:0.2rem 0; line-height:1.5;'>"
+            f"<span style='color:var(--text-faint, var(--text-subtle)); "
+            f"font-size:0.72rem; margin-right:0.4rem;'>[{it['action_title'][:14]}]</span>"
+            f"{it['milestone']}</li>"
+            for it in items
+        )
+        quarter_html_blocks.append(f"""
+        <div style='margin-bottom:0.7rem;'>
+          <div style='font-weight:700; color:var(--accent, #2563eb); font-size:0.82rem;
+                      margin-bottom:0.3rem;'>{q_label}</div>
+          <ul style='margin:0; padding-left:1.1rem;'>{action_lines}</ul>
+        </div>
+        """)
+
+    # 처방 출처 박스
+    sources_html = "".join(
+        f"<div style='font-size:0.72rem; color:var(--text-subtle); "
+        f"margin:0.1rem 0;'>· <b>{a.get('title','')[:30]}</b>: "
+        f"{a.get('source_basis','—')}</div>"
+        for a in actions
+    )
+
+    with st.expander(f"📋 {univ_name} 학습 갭 로드맵 보기", expanded=False):
+        st.markdown(
+            f"""
+            <div style='padding:0.4rem 0;'>
+              <div class='subtle' style='font-size:0.82rem; margin-bottom:0.5rem;'>
+                학년: <b>{grade_level}</b> · 대입까지 약
+                <b>{timeline.get('d_day_months','?')}</b>개월 ·
+                전체 분기 {len(timeline.get('quarters', []))}개
+              </div>
+              <div style='margin-bottom:0.7rem;'>{gap_chip_html}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if quarter_html_blocks:
+            st.markdown(
+                "<div class='section-title' style='font-size:0.92rem; margin-top:0.5rem;'>"
+                "분기별 행동 계획</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("".join(quarter_html_blocks), unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div class='subtle'>현재 분석된 갭에 대한 추천 행동이 없습니다.</div>",
+                unsafe_allow_html=True,
+            )
+        if sources_html:
+            st.markdown(
+                f"<div style='margin-top:0.7rem; padding-top:0.6rem; "
+                f"border-top:1px solid var(--border);'>"
+                f"<div class='subtle' style='font-size:0.78rem; font-weight:700; "
+                f"margin-bottom:0.3rem;'>처방 출처 (정책·통계 근거)</div>"
+                f"{sources_html}</div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            f"<div class='subtle' style='font-size:0.74rem; margin-top:0.7rem; "
+            f"font-style:italic;'>⚠ {roadmap.get('disclaimer','')}</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def render_track_recommendations(track_recs: List[Dict], student_area: str = None):
     """A3 — 학생별 추천 전형 카드를 표시."""
     if not track_recs:
@@ -324,25 +434,25 @@ def render_score_methodology():
 <div class='glass-card'>
   <div class='section-title'>적합도 점수는 어떻게 계산되나요?</div>
   <div class='subtle' style='font-size:0.92rem; line-height:1.7; color:var(--text-body);'>
-    각 대학의 적합도는 <b>0~100점</b>으로, 네 가지 항목에 가중치를 곱해
+    각 대학의 적합도는 <b>0~100점</b>으로, 네 가지 객관 지표에 가중치를 곱해
     합산한 뒤 보너스를 더해 산출합니다.
   </div>
   <div style='margin-top:0.7rem; display:flex; flex-wrap:wrap; gap:0.4rem;'>
-    <span class='tag-chip'>학과 일치도 50%</span>
-    <span class='tag-chip'>등급대 적합 23%</span>
-    <span class='tag-chip'>인재상 부합 15%</span>
-    <span class='tag-chip'>기본 성적 12%</span>
+    <span class='tag-chip'>합격선 적합도 35%</span>
+    <span class='tag-chip'>진로 일치도 25%</span>
+    <span class='tag-chip'>전형 적합도 25%</span>
+    <span class='tag-chip'>인재상 유사도 15%</span>
     <span class='tag-chip'>+ 보너스 최대 25점</span>
   </div>
   <div class='subtle' style='font-size:0.88rem; line-height:1.7; margin-top:0.7rem; color:var(--text-meta);'>
-    · <b>학과 일치도</b> — 학생의 추천 학과가 그 대학에 실제로 있는지·얼마나 가까운지<br>
-    · <b>등급대 적합</b> — 학생 등급이 그 학과 전형의 합격 등급대에 드는지<br>
-    · <b>인재상 부합</b> — 대학이 명시한 인재상 키워드와 학생 신호의 겹침<br>
-    · <b>기본 성적</b> — 전반적 내신 수준 반영<br>
-    · <b>보너스</b> — 목표 대학 일치, 계열 클러스터 적합 시 가산
+    · <b>합격선 적합도</b> — 학생 등급이 그 학과 전형의 합격 등급대에 어느 정도 부합하는지 (객관)<br>
+    · <b>진로 일치도</b> — 학생 추천 학과 1·2·3순위가 그 대학에 존재하는지 (우선순위 가중)<br>
+    · <b>전형 적합도</b> — 학생의 추천 전형(학종·교과·논술·정시 등) Top1이 그 대학에 있는지<br>
+    · <b>인재상 유사도</b> — 학생 신호와 대학 인재상의 의미 유사도를 후보 대학 풀 내에서 상대 순위로 환산<br>
+    · <b>보너스</b> — 목표 대학 일치, 진로 클러스터 적합, 추천 학과 2개 이상 매칭 시 가산
   </div>
   <div class='subtle' style='font-size:0.84rem; margin-top:0.7rem; color:var(--text-subtle);'>
-    점수 = (학과 × 0.50 + 등급대 × 0.23 + 인재상 × 0.15 + 성적 × 0.12) + 보너스,
+    점수 = (합격선 × 0.35 + 진로 × 0.25 + 전형 × 0.25 + 인재상 × 0.15) + 보너스,
     100점 상한. 동일 입력은 항상 동일 점수를 냅니다(결정론적).
   </div>
 </div>
@@ -353,10 +463,10 @@ def render_score_methodology():
 
 def render_university_card(rec: Dict, rank: int):
     fit_pct = max(0, min(100, int(rec['fit_score'])))
-    major_pct = max(0, min(100, int(rec['major_score'])))
-    talent_pct = max(0, min(100, int(rec['talent_score'])))
-    grade_pct = max(0, min(100, int(rec['grade_score'])))
-    matched = ''.join([f'<span class="tag-chip">{x}</span>' for x in rec['matched_departments']])
+    band_pct = max(0, min(100, int(rec.get('band_score', 50))))
+    career_pct = max(0, min(100, int(rec.get('career_score', 50))))
+    track_pct = max(0, min(100, int(rec.get('track_score', 50))))
+    talent_pct = max(0, min(100, int(rec.get('talent_score', 50))))
     talents = ''.join([f'<span class="tag-chip">{x}</span>' for x in rec['talent_keywords']])
     bonus_text = f"목표대학 가중치 +{rec['target_bonus']}" if rec.get('target_bonus') else '목표대학 가중치 없음'
     admission_text = ""
@@ -385,10 +495,14 @@ def render_university_card(rec: Dict, rank: int):
     # 인재상 적합도 백엔드 표시 (워드 임베딩 vs 키워드)
     backend_note = ""
     backend = rec.get("talent_backend", "")
-    if backend.startswith("embedding"):
-        backend_note = " <span class='subtle' style='font-size:0.72rem;'>(워드 임베딩)</span>"
-    elif backend == "keyword":
+    if "embedding" in backend:
+        backend_note = " <span class='subtle' style='font-size:0.72rem;'>(워드 임베딩·상대)</span>"
+    elif "keyword" in backend:
         backend_note = " <span class='subtle' style='font-size:0.72rem;'>(키워드)</span>"
+
+    # 진로 매칭 학과 수 표시
+    match_count = rec.get("career_matched_count", 0)
+    match_count_text = f" ({match_count}/3 매칭)" if match_count else ""
 
     st.markdown(f"""
     <div class='recommend-card'>
@@ -402,12 +516,11 @@ def render_university_card(rec: Dict, rank: int):
         <div class='score-pill'>적합도 {rec['fit_score']}</div>
       </div>
       <div class='score-bar-wrap'><div class='score-bar-label'>총 적합도</div><div class='score-bar'><div class='score-fill' style='width:{fit_pct}%'></div></div></div>
-      <div class='score-bar-wrap'><div class='score-bar-label'>학과 일치도</div><div class='score-bar'><div class='score-fill' style='width:{major_pct}%'></div></div></div>
-      <div class='score-bar-wrap'><div class='score-bar-label'>인재상 적합도{backend_note}</div><div class='score-bar'><div class='score-fill' style='width:{talent_pct}%'></div></div></div>
-      <div class='score-bar-wrap'><div class='score-bar-label'>기본 성적 적합도</div><div class='score-bar'><div class='score-fill' style='width:{grade_pct}%'></div></div></div>
-      <div class='section-title'>일치 학과군</div>
-      <div>{matched if matched else '<span class="subtle">없음</span>'}</div>
-      <div class='section-title' style='margin-top:0.8rem;'>인재상 키워드</div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>합격선 적합도 <span class='subtle' style='font-size:0.72rem;'>(35%)</span></div><div class='score-bar'><div class='score-fill' style='width:{band_pct}%'></div></div></div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>진로 일치도 <span class='subtle' style='font-size:0.72rem;'>(25%){match_count_text}</span></div><div class='score-bar'><div class='score-fill' style='width:{career_pct}%'></div></div></div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>전형 적합도 <span class='subtle' style='font-size:0.72rem;'>(25%)</span></div><div class='score-bar'><div class='score-fill' style='width:{track_pct}%'></div></div></div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>인재상 유사도{backend_note} <span class='subtle' style='font-size:0.72rem;'>(15%)</span></div><div class='score-bar'><div class='score-fill' style='width:{talent_pct}%'></div></div></div>
+      <div class='section-title' style='margin-top:0.7rem;'>인재상 키워드</div>
       <div>{talents if talents else '<span class="subtle">없음</span>'}</div>
       <div class='subtle' style='margin-top:0.9rem;'>{bonus_text}</div>
       <div class='subtle' style='margin-top:0.3rem;'>{rec.get('notes', '')}</div>
