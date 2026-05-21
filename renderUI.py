@@ -243,6 +243,80 @@ def render_chip_row(title: str, items: List[str], dept: bool = False):
     st.markdown(f"<div class='glass-card'><div class='section-title'>{title}</div>{chips if chips else empty}</div>", unsafe_allow_html=True)
 
 
+def render_track_recommendations(track_recs: List[Dict], student_area: str = None):
+    """A3 — 학생별 추천 전형 카드를 표시."""
+    if not track_recs:
+        return
+    top = track_recs[:3]
+    region_hint = f" · 거주 권역 추정: {student_area}" if student_area else ""
+
+    cards_html = []
+    for i, t in enumerate(top, start=1):
+        score = int(round(t["score"]))
+        reasons = "".join(
+            f"<li style='color:var(--text-meta);font-size:0.85rem;'>{r}</li>"
+            for r in t.get("reasons", [])[:3]
+        ) or "<li class='subtle'>—</li>"
+        cautions = "".join(
+            f"<li style='color:#f59e0b;font-size:0.82rem;'>⚠ {c}</li>"
+            for c in t.get("cautions", [])[:2]
+        )
+        # 점수에 따른 색상
+        if score >= 75: pill_color = "linear-gradient(135deg,#16a34a,#22c55e)"
+        elif score >= 55: pill_color = "linear-gradient(135deg,#1d4ed8,#3b82f6)"
+        else: pill_color = "linear-gradient(135deg,#94a3b8,#cbd5e1)"
+        cards_html.append(f"""
+        <div style='background:var(--bg-card); border:1px solid var(--border);
+                    border-radius:14px; padding:0.9rem 1rem;'>
+          <div style='display:flex;justify-content:space-between;align-items:flex-start;
+                      gap:0.5rem; margin-bottom:0.5rem;'>
+            <div>
+              <div style='font-size:0.72rem; color:var(--text-faint, var(--text-subtle));
+                          font-weight:700; text-transform:uppercase; letter-spacing:0.05em;'>전형 {i}</div>
+              <div style='font-size:1rem; font-weight:800; color:var(--text-primary);'>{t["label"]}</div>
+            </div>
+            <div style='background:{pill_color}; color:white; padding:0.35rem 0.7rem;
+                        border-radius:999px; font-weight:800; font-size:0.85rem;'>적합도 {score}</div>
+          </div>
+          <ul style='margin:0.3rem 0 0 1rem; padding:0;'>{reasons}{cautions}</ul>
+        </div>
+        """)
+
+    st.markdown(
+        f"""
+        <div class='section-title' style='margin-top:1.2rem;'>추천 전형{region_hint}</div>
+        <div style='display:grid; grid-template-columns: repeat(3, 1fr); gap:0.8rem;
+                    margin-bottom:0.8rem;'>
+          {"".join(cards_html)}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_support_level_header(level: str, count: int):
+    """A2 — 지원군 그룹 헤더."""
+    colors = {
+        "안정":      ("#16a34a", "🛡️", "내 등급이 합격선보다 좋은 대학"),
+        "적정":      ("#1d4ed8", "🎯", "내 등급이 합격선 범위 안인 대학"),
+        "상향":      ("#ea580c", "📈", "노력하면 합격 가능한 대학"),
+        "상향(도전)": ("#dc2626", "🚀", "도전적으로 지원할 대학"),
+        "재고":      ("#94a3b8", "⚠️", "현재 등급으로는 어려운 대학"),
+        "정보부족":  ("#94a3b8", "❔", "합격선 데이터 부족"),
+    }
+    color, icon, desc = colors.get(level, ("#64748b", "•", ""))
+    st.markdown(
+        f"""<div style='margin: 1rem 0 0.6rem 0; padding: 0.55rem 0.9rem;
+                    border-left: 4px solid {color}; background: {color}11;
+                    border-radius: 6px;'>
+          <span style='font-size:1rem;'>{icon}</span>
+          <span style='font-weight:800; color:{color}; margin-left:0.35rem;'>{level}</span>
+          <span style='color:var(--text-meta); margin-left:0.5rem; font-size:0.85rem;'>{count}개 · {desc}</span>
+        </div>""",
+        unsafe_allow_html=True
+    )
+
+
 def render_score_methodology():
     """대학 적합도 점수 산출 방식을 사용자에게 간단히 설명."""
     st.markdown(
@@ -279,7 +353,6 @@ def render_score_methodology():
 
 def render_university_card(rec: Dict, rank: int):
     fit_pct = max(0, min(100, int(rec['fit_score'])))
-    # major_score는 이미 0~100 정규화된 값 (recommend_universities에서 처리)
     major_pct = max(0, min(100, int(rec['major_score'])))
     talent_pct = max(0, min(100, int(rec['talent_score'])))
     grade_pct = max(0, min(100, int(rec['grade_score'])))
@@ -293,20 +366,44 @@ def render_university_card(rec: Dict, rank: int):
     detail_text = ""
     if detail.get("department"):
         detail_text = f"{detail.get('department')} / {detail.get('track_name') or '-'}"
-        
+
+    # A2: 지원군 라벨 배지
+    support_level = rec.get("support_level") or ""
+    support_reason = rec.get("support_reason") or ""
+    level_colors = {
+        "안정": "#16a34a", "적정": "#1d4ed8", "상향": "#ea580c",
+        "상향(도전)": "#dc2626", "재고": "#94a3b8", "정보부족": "#94a3b8",
+    }
+    lvl_color = level_colors.get(support_level, "#64748b")
+    support_badge = (
+        f"<span style='background:{lvl_color}22; color:{lvl_color}; "
+        f"border:1px solid {lvl_color}55; padding:0.18rem 0.5rem; border-radius:999px; "
+        f"font-size:0.72rem; font-weight:700; margin-left:0.4rem;'>{support_level}</span>"
+        if support_level else ""
+    )
+
+    # 인재상 적합도 백엔드 표시 (워드 임베딩 vs 키워드)
+    backend_note = ""
+    backend = rec.get("talent_backend", "")
+    if backend.startswith("embedding"):
+        backend_note = " <span class='subtle' style='font-size:0.72rem;'>(워드 임베딩)</span>"
+    elif backend == "keyword":
+        backend_note = " <span class='subtle' style='font-size:0.72rem;'>(키워드)</span>"
+
     st.markdown(f"""
     <div class='recommend-card'>
       <div class='recommend-head'>
         <div>
-          <div class='subtle'>추천 {rank}</div>
+          <div class='subtle'>추천 {rank} {support_badge}</div>
           <div class='recommend-title'>{rec['university']}</div>
           <div class='subtle'>{rec['region']} · {rec['campus'] if rec['campus'] else '단일 캠퍼스/미표기'}</div>
+          {("<div class='subtle' style='font-size:0.76rem; margin-top:0.2rem;'>"+support_reason+"</div>") if support_reason else ""}
         </div>
         <div class='score-pill'>적합도 {rec['fit_score']}</div>
       </div>
       <div class='score-bar-wrap'><div class='score-bar-label'>총 적합도</div><div class='score-bar'><div class='score-fill' style='width:{fit_pct}%'></div></div></div>
       <div class='score-bar-wrap'><div class='score-bar-label'>학과 일치도</div><div class='score-bar'><div class='score-fill' style='width:{major_pct}%'></div></div></div>
-      <div class='score-bar-wrap'><div class='score-bar-label'>인재상 적합도</div><div class='score-bar'><div class='score-fill' style='width:{talent_pct}%'></div></div></div>
+      <div class='score-bar-wrap'><div class='score-bar-label'>인재상 적합도{backend_note}</div><div class='score-bar'><div class='score-fill' style='width:{talent_pct}%'></div></div></div>
       <div class='score-bar-wrap'><div class='score-bar-label'>기본 성적 적합도</div><div class='score-bar'><div class='score-fill' style='width:{grade_pct}%'></div></div></div>
       <div class='section-title'>일치 학과군</div>
       <div>{matched if matched else '<span class="subtle">없음</span>'}</div>
@@ -326,3 +423,4 @@ def env_help_panel():
 APP_PASSWORD_HASH=pbkdf2_sha256$240000$<salt_hex>$<hash_hex>""", language='bash')
     st.write('비밀번호 해시는 앱 내부 도구 또는 아래 스크립트로 생성할 수 있습니다.')
     st.code("""python -c "import secrets,hashlib; p='your_password'; s=secrets.token_bytes(16); i=240000; d=hashlib.pbkdf2_hmac('sha256', p.encode(), s, i); print(f'pbkdf2_sha256${i}${s.hex()}${d.hex()}')\"""", language='bash')
+

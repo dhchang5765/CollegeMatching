@@ -4,3 +4,5 @@ plotly>=5.20.0
 kiwipiepy>=0.17.0
 google-genai>=0.4.0
 python-dotenv>=1.0.0
+# 워드 임베딩 (인재상 적합도 의미 유사도). 미설치 시 Gemini embedding → 키워드 매칭으로 자동 fallback
+sentence-transformers>=2.7.0
