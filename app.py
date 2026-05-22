@@ -546,7 +546,7 @@ def career_match_score(target_departments: List[str], university: Dict) -> Tuple
         n = dept.get("name", "")
         if n:
             dept_names.append(n)
-            for alias in dept.get("aliases", []):
+            for alias in (dept.get("aliases") or []):
                 dept_names.append(alias)
 
     for rank, target in enumerate(target_departments[:3]):
@@ -797,7 +797,6 @@ def recommend_universities(db: Dict, signals: Dict, target_departments: List[str
         recs.append({
             "university": univ_name,
             "region": u.get("region"),
-            "campus": u.get("campus"),
             "fit_score": total,
             "matched_departments": matched[:6],
             "talent_keywords": u.get("talent_keywords", []),
@@ -964,7 +963,7 @@ def build_recommendation_html(recs: List[Dict],
             <div>
               <div class='rank'>추천 {i} {('· ' + esc(support)) if support else ''}</div>
               <div class='univ'>{esc(r.get("university"))}</div>
-              <div class='meta'>{esc(r.get("region") or "")} · {esc(r.get("campus") or "단일 캠퍼스")}</div>
+              <div class='meta'>{esc(r.get("region") or "")}</div>
             </div>
             <div class='pill'>적합도 {fit}</div>
           </div>
@@ -1296,20 +1295,14 @@ def main():
         left, right = st.columns([1, 1], gap="medium")
         with left:
             render_chip_row('우선 추천 학과', target_departments, dept=True)
-            render_chip_row('핵심 키워드', signals.get('top_keywords', [])[:8])
 
-            # ── 학생 신호 (3개 핵심 정보만) ─────────────────────
-            tracks = signals.get("detected_tracks") or []
-            track_label = f"선호 트랙: {', '.join(tracks)}" if tracks else "선호 트랙: 미탐지"
-            target_univ = signals.get('target_university')
-            target_label = f"목표 대학: {target_univ}" if target_univ else "목표 대학: 미탐지"
-
-            student_signals = [
-                track_label,
-                target_label,
-                f"전형 선호 성향: {signals.get('admission_orientation', '미탐지')}",
-            ]
-            render_chip_row('학생 신호', student_signals)
+            # ── 학생 프로파일 (4슬롯: 강점·약점·관심·위험) ──────
+            from student_profile import build_student_profile
+            profile = build_student_profile(
+                signals, answer_result,
+                answers_text=answers_text if both_uploaded else None
+            )
+            render_student_profile_card(profile)
 
         with right:
             st.markdown(

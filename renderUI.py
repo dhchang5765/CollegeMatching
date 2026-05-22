@@ -236,6 +236,60 @@ def render_metric_card(label: str, value: str, desc: str):
     """, unsafe_allow_html=True)
 
 
+def render_student_profile_card(profile: Dict):
+    """
+    학생 프로파일 4슬롯 카드 — '핵심 키워드' 대체.
+    profile: { strengths, weaknesses, interests, risks, mode }
+    """
+    if not profile:
+        return
+
+    mode = profile.get("mode", "exploring")
+    mode_label = "진로 명확" if mode == "clear" else "진로 탐색 단계"
+    mode_color = "#16a34a" if mode == "clear" else "#ea580c"
+
+    def slot_html(title, items, color, icon):
+        if not items:
+            content = "<span class='subtle' style='color:var(--text-subtle);'>—</span>"
+        else:
+            content = "".join(
+                f"<span style='background:{color}18; color:{color}; border:1px solid {color}44; "
+                f"padding:0.22rem 0.6rem; border-radius:999px; font-size:0.82rem; "
+                f"font-weight:600; margin:0.15rem 0.25rem 0.15rem 0; display:inline-block;'>{item}</span>"
+                for item in items
+            )
+        return f"""
+        <div style='margin-bottom:0.7rem;'>
+          <div style='font-size:0.78rem; font-weight:700; color:{color};
+                      text-transform:uppercase; letter-spacing:0.03em; margin-bottom:0.3rem;'>
+            {icon} {title}
+          </div>
+          <div>{content}</div>
+        </div>
+        """
+
+    st.markdown(
+        f"""
+        <div style='margin-top:0.6rem;'>
+          <div style='display:flex; justify-content:space-between; align-items:center;
+                      margin-bottom:0.5rem;'>
+            <div class='section-title' style='margin:0;'>학생 프로파일</div>
+            <span style='background:{mode_color}22; color:{mode_color};
+                         border:1px solid {mode_color}55; padding:0.18rem 0.55rem;
+                         border-radius:999px; font-size:0.75rem; font-weight:700;'>
+              {mode_label}
+            </span>
+          </div>
+          {slot_html("강점", profile["strengths"], "#16a34a", "💪")}
+          {slot_html("약점", profile["weaknesses"], "#dc2626", "⚠")}
+          {slot_html("관심", profile["interests"], "#1d4ed8", "🎯")}
+          {slot_html("위험 신호", profile["risks"], "#ea580c", "🚨")}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_chip_row(title: str, items: List[str], dept: bool = False):
     chip_class = 'dept-chip' if dept else 'tag-chip'
     chips = ''.join([f'<span class="{chip_class}">{item}</span>' for item in items if item])
@@ -510,7 +564,7 @@ def render_university_card(rec: Dict, rank: int):
         <div>
           <div class='subtle'>추천 {rank} {support_badge}</div>
           <div class='recommend-title'>{rec['university']}</div>
-          <div class='subtle'>{rec['region']} · {rec['campus'] if rec['campus'] else '단일 캠퍼스/미표기'}</div>
+          <div class='subtle'>{rec['region']}</div>
           {("<div class='subtle' style='font-size:0.76rem; margin-top:0.2rem;'>"+support_reason+"</div>") if support_reason else ""}
         </div>
         <div class='score-pill'>적합도 {rec['fit_score']}</div>
