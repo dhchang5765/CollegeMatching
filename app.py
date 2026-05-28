@@ -42,7 +42,6 @@ def extract_best_admission_band(univ: Dict, target_departments: List[str]) -> Tu
                     best_dep = {
                         "department": dep_name,
                         "track_name": adm.get("track_name"),
-                        "fitcluster": dep.get("fit_cluster") or dep.get("fitcluster"),
                         "band": band,
                     }
     return best, best_dep
@@ -77,7 +76,10 @@ def classify_support_level(overall_grade: Optional[float],
     if lo is None:
         return ("정보부족", "합격선 데이터 형식을 해석할 수 없습니다.")
 
-    # 학생 등급이 합격선 하한보다 0.3 이상 좋음
+    # 학생 등급이 합격선 하한보다 1.5 이상 좋음 — 사실상 의미 없는 하향
+    if overall_grade <= lo - 1.5:
+        return ("하향(과도)", f"학생 등급 {overall_grade} 가 합격선 {lo}-{hi} 보다 1.5 이상 좋음 — 추천 의미 낮음")
+    # 학생 등급이 합격선 하한보다 0.3~1.5 좋음
     if overall_grade <= lo - 0.3:
         return ("안정", f"학생 등급 {overall_grade} ≤ 합격선 {lo}-{hi}")
     # 학생 등급이 합격선 범위 안 (약간 좋음 포함)
@@ -636,47 +638,6 @@ def major_match_score(target_departments: List[str], university: Dict) -> Tuple[
     return score, list(dict.fromkeys(matched))
 
 
-def talent_fit_score_v2(signals: Dict, univ_name: str,
-                         talent_keywords: List[str],
-                         answer_result: Optional[Dict] = None) -> Tuple[float, str]:
-    """
-    워드 임베딩 기반 인재상 적합도 (v2).
-    임베딩 모델 가용 시 의미 유사도, 미가용 시 키워드 부분 일치로 자동 fallback.
-    추가 규칙 보너스(전형 일치, 학생부종합 가중치)는 유지.
-    """
-    from embeddings import build_student_profile_text, talent_similarity
-
-    student_text = build_student_profile_text(signals, answer_result)
-    base, backend = talent_similarity(student_text, univ_name, talent_keywords)
-
-    # 도메인 규칙 보너스 (임베딩 단독으로 잡기 어려운 신호)
-    if signals.get('admission_preference') == '학생부종합' and any(
-        k in talent_keywords for k in ['창의', '소통', '실천', '리더십', '융합']
-    ):
-        base += 6
-    if signals.get('is_student_record_heavy') and any(
-        k in talent_keywords for k in ['표현', '실천', '창의']
-    ):
-        base += 4
-    return min(100.0, base), backend
-
-
-def grade_fit_score(overall_grade: Optional[float]) -> float:
-    if overall_grade is None:
-        return 55.0
-    if overall_grade <= 2.0:
-        return 90.0
-    if overall_grade <= 2.5:
-        return 82.0
-    if overall_grade <= 3.0:
-        return 74.0
-    if overall_grade <= 3.5:
-        return 66.0
-    if overall_grade <= 4.0:
-        return 58.0
-    return 50.0
-
-
 def target_bonus(university_name: str, signals: Dict) -> float:
     target = signals.get("target_university")
     if not target:
@@ -766,18 +727,6 @@ def recommend_universities(db: Dict, signals: Dict, target_departments: List[str
         # ── 보너스 (최대 +25) ────────────────────────
         bonus = target_bonus(univ_name, signals)  # 목표 대학 가산
 
-        # 진로 클러스터 일치 보너스 (의약학 지망 → 의예과 보유 대학 등)
-        fitcluster_bonus = 0.0
-        fitcluster = (dep_match or {}).get("fitcluster")
-        if fitcluster:
-            top_cats = sorted(infer_category_scores(signals).items(),
-                              key=lambda x: x[1], reverse=True)[:2]
-            top_fitclusters = []
-            for cat, _ in top_cats:
-                top_fitclusters.extend(CATEGORY_TO_FITCLUSTER.get(cat, []))
-            if fitcluster in top_fitclusters:
-                fitcluster_bonus = 8.0
-
         # 다수 학과 매칭 보너스 (2개 이상 매칭 시)
         multi_match_bonus = 5.0 if career_matched_count >= 2 else 0.0
 
@@ -788,7 +737,7 @@ def recommend_universities(db: Dict, signals: Dict, target_departments: List[str
             trk_score    * 0.25 +
             talent_score * 0.15
         )
-        bonus_total = min(25.0, bonus + fitcluster_bonus + multi_match_bonus)
+        bonus_total = min(25.0, bonus + multi_match_bonus)
         total = round(min(100.0, base_score + bonus_total), 2)
 
         # A2: 지원군 분류
@@ -811,14 +760,157 @@ def recommend_universities(db: Dict, signals: Dict, target_departments: List[str
             "career_matched_count": career_matched_count,
             "matched_admission_band": band,
             "matched_department_detail": dep_match,
-            "fitcluster_bonus": fitcluster_bonus,
             "multi_match_bonus": multi_match_bonus,
             "support_level": support_level,
             "support_reason": support_reason,
         })
 
-    recs.sort(key=lambda x: x["fit_score"], reverse=True)
+    # 정렬: fit_score 우선, 동점 시 진로 일치도 → 합격선 거리(가까운 순)
+    def _sort_key(r):
+        band = r.get("matched_admission_band", "")
+        lo = 9.0
+        m = re.match(r'\s*([0-9.]+)', band) if band else None
+        if m:
+            try: lo = float(m.group(1))
+            except: pass
+        og = (overall_grade if overall_grade is not None else 5.0)
+        dist = abs(og - lo)
+        # fit_score 내림차순(음수), career 내림차순(음수), 거리 오름차순
+        return (-r["fit_score"], -r.get("career_score", 0), dist)
+    recs.sort(key=_sort_key)
     return _distribute_by_support_level(recs, total=top_n)
+
+
+def recommend_universities_by_grade(db: Dict, student_grade: float,
+                                     top_n: int = 3,
+                                     student_categories: Optional[List[str]] = None,
+                                     dept_keywords: Optional[List[str]] = None,
+                                     balanced_levels: bool = True) -> List[Dict]:
+    """
+    학생 등급 기반 대학 추천 (C 옵션: 카테고리 필터 + 키워드 필터 + E 옵션: 균형 분배).
+
+    원리
+      1) student_categories 가 주어지면 해당 카테고리 학과만 후보
+      2) dept_keywords 가 주어지면 학과명에 키워드가 포함된 학과 우선
+         (매칭 학과가 있으면 그 학과만 사용, 없으면 카테고리 필터 결과 그대로)
+      3) balanced_levels=True 면 안정/적정/상향에서 1개씩 균형 분배 (E 옵션)
+         False 면 거리 작은 순으로만 top_n
+
+    student_categories: 학과 표준 카테고리 (인문/사회/자연/공학/의학/약학/교육/예체능)
+    dept_keywords: 학생 target_departments 에서 추출한 핵심 키워드
+                   (예: ['인공지능', '데이터', '컴퓨터'])
+    """
+    if student_grade is None:
+        return []
+
+    candidates = []
+    for u in db.get("universities", []):
+        # 학과 카테고리 필터 (1차)
+        relevant_depts = u.get("departments", [])
+        if student_categories:
+            relevant_depts = [d for d in relevant_depts
+                              if d.get("category") in student_categories]
+        if not relevant_depts:
+            continue
+
+        # 학과명 키워드 필터 (2차) — 매칭 학과가 있으면 그 학과만, 없으면 그대로
+        has_keyword_match = True  # 키워드 미사용 시 기본 True
+        if dept_keywords:
+            kw_matched = [d for d in relevant_depts
+                          if any(kw in d.get("name", "") for kw in dept_keywords)]
+            if kw_matched:
+                relevant_depts = kw_matched
+                has_keyword_match = True
+            else:
+                has_keyword_match = False  # fallback 발생 — 정렬 시 패널티
+
+        # 각 학과의 최저 cutoff_p50
+        dept_min_cuts = []
+        for d in relevant_depts:
+            cuts = [a.get("cutoff_p50") for a in d.get("admissions", [])
+                    if a.get("cutoff_p50") is not None]
+            if cuts:
+                min_cut = min(cuts)
+                dept_min_cuts.append({
+                    "dept": d["name"],
+                    "category": d.get("category", ""),
+                    "min_cutoff": min_cut,
+                    "min_track": next((a["track_name"] for a in d["admissions"]
+                                       if a.get("cutoff_p50") == min_cut), ""),
+                })
+        if not dept_min_cuts:
+            continue
+
+        rep = min(dept_min_cuts, key=lambda x: x["min_cutoff"])
+        dist = abs(student_grade - rep["min_cutoff"])
+
+        if student_grade <= rep["min_cutoff"] - 1.5:
+            level = "하향(과도)"
+        elif student_grade <= rep["min_cutoff"] - 0.3:
+            level = "안정"
+        elif student_grade <= rep["min_cutoff"] + 0.3:
+            level = "적정"
+        elif student_grade <= rep["min_cutoff"] + 0.7:
+            level = "상향"
+        else:
+            level = "상향(도전)"
+
+        # 학생 등급보다 너무 좋은 합격선 대학은 추천에서 배제
+        if level == "하향(과도)":
+            continue
+
+        candidates.append({
+            "university": u["name"],
+            "region": u.get("region", ""),
+            "talent_keywords": u.get("talent_keywords", []),
+            "talent_statement": u.get("talent_statement"),
+            "aliases": u.get("aliases"),
+            "representative_cutoff": round(rep["min_cutoff"], 2),
+            "representative_dept": rep["dept"],
+            "representative_track": rep["min_track"],
+            "grade_distance": round(dist, 2),
+            "support_level": level,
+            "matched_categories": sorted(set(d["category"] for d in dept_min_cuts if d["category"])),
+            "all_departments_summary": sorted(
+                dept_min_cuts, key=lambda x: x["min_cutoff"]
+            )[:6],
+            "department_count": len(dept_min_cuts),
+            "_departments_raw": relevant_depts,
+            "_has_keyword_match": has_keyword_match,
+        })
+
+    level_priority = {"안정": 0, "적정": 1, "상향": 2, "상향(도전)": 3}
+    # 정렬: 키워드 매칭 대학 우선 → 거리 작은 순 → 지원군 우선순위
+    candidates.sort(key=lambda x: (
+        not x.get("_has_keyword_match", True),  # False(미매칭)=1 → 뒤로
+        x["grade_distance"],
+        level_priority.get(x["support_level"], 9),
+    ))
+
+    if not balanced_levels:
+        return candidates[:top_n]
+
+    # E 옵션: 지원군별 균형 분배 — 각 지원군에서 거리 가장 작은 후보 1개씩
+    # 우선순위: 적정 → 안정 → 상향 → 상향(도전)
+    by_level: Dict[str, List[Dict]] = {}
+    for c in candidates:
+        by_level.setdefault(c["support_level"], []).append(c)
+
+    selected = []
+    pick_order = ["적정", "안정", "상향", "상향(도전)"]
+    # 1단계: 각 지원군에서 1개씩
+    for lv in pick_order:
+        if lv in by_level and by_level[lv]:
+            selected.append(by_level[lv].pop(0))
+            if len(selected) >= top_n:
+                break
+    # 2단계: 부족분을 같은 우선순위로 추가
+    if len(selected) < top_n:
+        for lv in pick_order:
+            while lv in by_level and by_level[lv] and len(selected) < top_n:
+                selected.append(by_level[lv].pop(0))
+
+    return selected[:top_n]
 
 
 def _distribute_by_support_level(scored_recs: List[Dict], total: int = 5) -> List[Dict]:
@@ -834,8 +926,16 @@ def _distribute_by_support_level(scored_recs: List[Dict], total: int = 5) -> Lis
     if not scored_recs:
         return []
 
-    # 지원군별 목표 개수 (한국 입시 컨설팅 표준 비율)
-    plan = {"안정": 1, "적정": 2, "상향": 2}
+    # '하향(과도)' 는 학생 등급보다 합격선이 1.5 이상 낮은 케이스 — 추천에서 제외
+    scored_recs = [r for r in scored_recs
+                    if r.get("support_level") != "하향(과도)"]
+    if not scored_recs:
+        return []
+
+    # 지원군별 목표 개수 (한국 입시 컨설팅 표준 + 도전 슬롯 1개)
+    # 안정 1 + 적정 2 + 상향 1 + 상향(도전) 1 = 5
+    # → 의대·약대 등 초고 합격선 지망 학생에게도 도전 옵션 1개를 보장
+    plan = {"안정": 1, "적정": 2, "상향": 1, "상향(도전)": 1}
 
     # 그룹화 (이미 fit_score 내림차순)
     groups: Dict[str, List[Dict]] = {}
@@ -910,7 +1010,9 @@ def build_recommendation_html(recs: List[Dict],
                               target_departments: List[str],
                               signals: Dict,
                               summary: str,
-                              category_scores: Dict[str, float]) -> str:
+                              category_scores: Dict[str, float],
+                              grade_recs: Optional[List[Dict]] = None,
+                              student_top_categories: Optional[List[str]] = None) -> str:
     """
     추천 카드 화면을 독립 HTML 파일로 직렬화.
     Streamlit 의존 없이 어떤 브라우저에서도 열림.
@@ -985,6 +1087,114 @@ def build_recommendation_html(recs: List[Dict],
     cards_html = "\n".join(card_blocks)
     depts_html = ", ".join(target_departments) or "—"
 
+    # ── 등급 기반 추가 추천 카드 (3개) + 전형 상세 표 ─────────
+    student_grade = signals.get("overall_grade")
+    grade_section_html = ""
+    if grade_recs:
+        gcat_label = ", ".join(student_top_categories or []) or "전체"
+        grade_card_blocks = []
+        for i, r in enumerate(grade_recs, start=1):
+            lvl = r.get("support_level", "")
+            lvl_color = {"안정":"#16a34a","적정":"#1d4ed8","상향":"#ea580c",
+                         "상향(도전)":"#dc2626"}.get(lvl, "#64748b")
+            dept_rows_html = ""
+            for d in r.get("all_departments_summary", []):
+                dept_rows_html += (
+                    f"<div style='display:flex; justify-content:space-between; "
+                    f"font-size:0.78rem; padding:0.2rem 0; border-bottom:1px solid var(--border);'>"
+                    f"<span>{esc(d['dept'][:24])} <small style='color:var(--text-subtle);'>({esc(d.get('category',''))})</small></span>"
+                    f"<b style='color:{lvl_color};'>{d['min_cutoff']:.2f}</b>"
+                    f"</div>"
+                )
+
+            # 전형 상세 표 (학생 등급 가까운 순 최대 20개)
+            flat_rows = []
+            for d in r.get("_departments_raw", []):
+                for adm in d.get("admissions", []):
+                    flat_rows.append({
+                        "dept": d.get("name", ""), "type": adm.get("type", ""),
+                        "track_name": adm.get("track_name", ""),
+                        "applicants": adm.get("applicants"),
+                        "competition": adm.get("competition_ratio"),
+                        "fill_rank": adm.get("fill_rank"),
+                        "p50": adm.get("cutoff_p50"),
+                        "p70": adm.get("cutoff_p70"),
+                        "p90": adm.get("cutoff_p90"),
+                        "subjects": adm.get("evaluated_subjects"),
+                    })
+            if student_grade is not None:
+                flat_rows.sort(key=lambda r: abs((r["p50"] or 99) - student_grade))
+            else:
+                flat_rows.sort(key=lambda r: r["p50"] or 99)
+
+            def _fmt(v, d=2):
+                if v is None: return "—"
+                if isinstance(v, float): return f"{v:.{d}f}"
+                return esc(str(v))
+
+            tbl_rows = ""
+            for fr in flat_rows[:20]:
+                bg = ""
+                if student_grade is not None and fr["p50"] is not None:
+                    dist = abs(fr["p50"] - student_grade)
+                    if dist <= 0.3: bg = "background:#16a34a14;"
+                    elif dist <= 0.7: bg = "background:#1d4ed814;"
+                    elif dist <= 1.2: bg = "background:#ea580c14;"
+                tbl_rows += (
+                    f"<tr style='{bg}'>"
+                    f"<td>{esc(fr['dept'][:18])}</td>"
+                    f"<td>{esc(fr['type'][:6])}</td>"
+                    f"<td>{esc(fr['track_name'][:18])}</td>"
+                    f"<td class='r'>{_fmt(fr['applicants'], 0)}</td>"
+                    f"<td class='r'>{_fmt(fr['competition'])}</td>"
+                    f"<td class='r'>{_fmt(fr['fill_rank'], 1)}</td>"
+                    f"<td class='r b'>{_fmt(fr['p50'])}</td>"
+                    f"<td class='r'>{_fmt(fr['p70'])}</td>"
+                    f"<td class='r'>{_fmt(fr['p90'])}</td>"
+                    f"<td class='s'>{esc((fr['subjects'] or '—')[:14])}</td>"
+                    f"</tr>"
+                )
+
+            admissions_table = f"""
+            <table class='admtable'>
+              <thead><tr>
+                <th>모집단위</th><th>중심전형</th><th>전형명</th>
+                <th class='r'>인원</th><th class='r'>경쟁률</th><th class='r'>충원순위</th>
+                <th class='r'>50%</th><th class='r'>70%</th><th class='r'>90%</th>
+                <th>학종 반영 교과</th>
+              </tr></thead>
+              <tbody>{tbl_rows}</tbody>
+            </table>
+            """ if flat_rows else ""
+
+            grade_card_blocks.append(f"""
+            <div class='card'>
+              <div class='card-head'>
+                <div>
+                  <div class='rank'>추가 추천 {i} <span style='color:{lvl_color};'>· {esc(lvl)}</span></div>
+                  <div class='univ'>{esc(r['university'])}</div>
+                  <div class='meta'>{esc(r.get('region',''))} · 학과 {r.get('department_count', 0)}개</div>
+                </div>
+                <div class='pill' style='background:{lvl_color}; color:white;'>최저 합격선 {r['representative_cutoff']:.2f}</div>
+              </div>
+              <div class='kv'><b>대표 학과</b> {esc(r.get('representative_dept',''))} ·
+                {esc(r.get('representative_track',''))} · 학생 등급 거리 <b>{r['grade_distance']:.2f}</b></div>
+              <div class='bar-label'>학과별 최저 합격선 (상위 6개)</div>
+              {dept_rows_html}
+              {("<div class='bar-label' style='margin-top:0.7rem;'>전형 상세</div>" + admissions_table) if admissions_table else ""}
+            </div>
+            """)
+        grade_cards_html = "\n".join(grade_card_blocks)
+        grade_section_html = f"""
+          <h2 style='margin-top:2.5rem;'>추가 추천 (등급 기반)</h2>
+          <p class='note'>
+            학생 등급 <b>{student_grade}</b> + 관심 카테고리 <b>{esc(gcat_label)}</b>을 기준으로,
+            학과 추천과는 별개로 등급만 고려한 대학 3개를 추가 추천합니다.
+            학생 관심 분야 학과 내에서 합격선이 학생 등급과 가장 가까운 대학들입니다.
+          </p>
+          <div class='cards'>{grade_cards_html}</div>
+        """
+
     # 계열 적합도 Top 5(>0)
     cat_top = sorted(
         [(k, v) for k, v in category_scores.items() if v > 0],
@@ -1055,7 +1265,19 @@ def build_recommendation_html(recs: List[Dict],
     .kv { font-size: 0.82rem; color: var(--text-meta); margin-top: 0.45rem; }
     .kv b { color: var(--text-primary); margin-right: 0.3rem; }
     .note { font-size: 0.8rem; color: var(--text-subtle); margin-top: 0.5rem;
-            background: var(--bg-note); padding: 0.4rem 0.55rem; border-radius: 8px; }
+            line-height: 1.6; }
+    .admtable { width: 100%; border-collapse: collapse; font-size: 0.74rem;
+                margin-top: 0.4rem; }
+    .admtable th { background: var(--bg-chip); padding: 0.35rem 0.4rem;
+                   text-align: left; font-weight: 700; color: var(--text-meta); }
+    .admtable td { padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border);
+                   color: var(--text-body); }
+    .admtable td.r { text-align: right; }
+    .admtable td.b { font-weight: 700; }
+    .admtable td.s { font-size: 0.7rem; color: var(--text-subtle); }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; }
+    @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } }
+    .note-box { background: var(--bg-note); padding: 0.4rem 0.55rem; border-radius: 8px; }
     .summary { font-size: 0.92rem; line-height: 1.7; color: var(--text-body); }
     ul.cats { list-style: none; padding: 0; margin: 0; }
     ul.cats li { padding: 0.3rem 0; border-bottom: 1px solid var(--bg-cats-divider);
@@ -1095,14 +1317,16 @@ def build_recommendation_html(recs: List[Dict],
     </div>
 
     <h3 style='font-size:0.78rem; color:var(--accent); text-transform:uppercase;
-              letter-spacing:0.06em; margin-bottom:0.6rem;'>추천 대학</h3>
+              letter-spacing:0.06em; margin-bottom:0.6rem;'>추천 대학 (학과 기반)</h3>
     <div class='grid'>
       {cards_html}
     </div>
 
+    {grade_section_html}
+
     <div class='footer'>
       적합도 = (합격선 0.35 + 진로 0.25 + 전형 0.25 + 인재상 0.15) + 보너스(최대 25점),
-      100점 상한 · 결정론적 산출
+      100점 상한 · 결정론적 산출 · 추가 추천은 등급+카테고리 기반 거리 정렬
     </div>
   </div>
 </body>
@@ -1111,7 +1335,7 @@ def build_recommendation_html(recs: List[Dict],
 
 def main():
     st.set_page_config(
-        page_title='학생 HTML 기반 대학 추천기',
+        page_title='MOS 진단 기반 대학 추천기',
         page_icon='🎓',
         layout='wide',
         initial_sidebar_state='collapsed'
@@ -1144,8 +1368,8 @@ def main():
     with top2:
         render_metric_card(
             '입력 형식',
-            '학생 HTML',
-            '학생 정보를 담은 MOS 진단 보고서를 삽입하세요.'
+            '학생 HTML + 답변 JSON',
+            '학생 정보를 담은 MOS 진단 보고서와 답변 JSON을 삽입하세요.'
         )
     with top3:
         render_metric_card(
@@ -1316,29 +1540,35 @@ def main():
         # ── 중간: 추천 전형 (A3) ────────────────────────────────
         render_track_recommendations(track_recs, student_area)
 
-        # ── 하단: 추천 대학 ─────────────────────────────────────
+        # ── 하단 ①: 학과 기반 추천 대학 (5개) ───────────────────
         st.markdown(
-            "<div class='section-title' style='margin-top:1.5rem;'>추천 대학</div>",
+            "<div class='section-title' style='margin-top:1.5rem;'>추천 대학 (학과 기반)</div>",
             unsafe_allow_html=True
         )
         with st.expander("적합도 점수 산출 방식 안내", expanded=False):
             render_score_methodology()
 
         if not target_departments:
-            st.warning("HTML에서 추천용 학과 후보를 충분히 구성하지 못했습니다. 키워드 사전 또는 최종 결론 반영 규칙을 점검해야 합니다.")
+            st.warning(
+                "HTML에서 추천용 학과 후보를 충분히 구성하지 못했습니다. "
+                "키워드 사전 또는 최종 결론 반영 규칙을 점검해야 합니다."
+            )
         elif not recs:
-            st.warning("추천 학과 후보는 추출되었지만, 현재 DB 학과명과의 매칭이 충분하지 않아 대학 추천이 생성되지 않았습니다.")
+            st.warning(
+                "추천 학과 후보는 추출되었지만 현재 DB 학과명과의 매칭이 충분하지 않아 "
+                "대학 추천이 생성되지 않았습니다."
+            )
         else:
-            # A2: 추천 대학을 지원군별로 그룹핑하여 표시
+            # 지원군별 그룹화 + 표시 (학과 기반 — 4축 적합도 카드)
             level_order = ["안정", "적정", "상향", "상향(도전)", "재고", "정보부족"]
-            grouped: Dict[str, List[Dict]] = {lv: [] for lv in level_order}
+            grouped_dept: Dict[str, List[Dict]] = {lv: [] for lv in level_order}
             for r in recs:
                 lv = r.get("support_level") or "정보부족"
-                grouped.setdefault(lv, []).append(r)
+                grouped_dept.setdefault(lv, []).append(r)
 
             global_rank = 1
             for lv in level_order:
-                cards = grouped.get(lv, [])
+                cards = grouped_dept.get(lv, [])
                 if not cards:
                     continue
                 render_support_level_header(lv, len(cards))
@@ -1349,11 +1579,149 @@ def main():
                     for col_i, rec in enumerate(row):
                         with cols[col_i]:
                             render_university_card(rec, global_rank)
-                            # 학습 갭 로드맵 (펼침 패널)
-                            from roadmap import build_roadmap
-                            roadmap = build_roadmap(rec, signals, answer_result, track_recs)
-                            render_roadmap_panel(roadmap, rec['university'])
+                            # 전형 상세 펼침 패널 — 같은 대학 DB 객체에서 학과 전체 조회
+                            univ_obj = next(
+                                (u for u in db['universities']
+                                 if u['name'] == rec['university']), None
+                            )
+                            if univ_obj:
+                                with st.expander(
+                                    f"📋 {rec['university']} 전형 상세 보기",
+                                    expanded=False
+                                ):
+                                    render_admissions_detail_panel(
+                                        univ_obj.get("departments", []),
+                                        student_grade=signals.get("overall_grade")
+                                    )
                             global_rank += 1
+
+        # ── 하단 ②: 등급 기반 추가 추천 (3개, C 옵션: 학생 카테고리 필터) ─
+        student_grade = signals.get("overall_grade")
+        grade_recs = []
+        student_top_categories = []
+
+        if student_grade is not None:
+            # C 옵션 ① — 학생 1순위 카테고리만 사용 (지난번 2개에서 좁힘)
+            top_cats = sorted(category_scores.items(),
+                              key=lambda x: x[1], reverse=True)[:1]
+            student_top_categories = [c for c, v in top_cats if v > 0]
+
+            # 6개 표준 학과 카테고리(인문/사회/자연/공학/의학/약학/예체능/교육)로 매핑
+            CATEGORY_TO_DEPT_CAT = {
+                # 인문계
+                "국어국문·언어": ["인문"],
+                "역사·철학·윤리": ["인문"],
+                # 사회계
+                "사회과학": ["사회"],
+                "경영·경제": ["사회"],
+                "미디어·광고·콘텐츠": ["사회"],
+                "심리·상담": ["사회"],
+                # 자연
+                "수학·통계": ["자연"],
+                "물리·화학·기초과학": ["자연"],
+                "생명과학·바이오": ["자연"],
+                "환경·지구과학": ["자연"],
+                # 공학
+                "컴퓨터·소프트웨어": ["공학"],
+                "인공지능·데이터사이언스": ["공학"],
+                "전기·전자·반도체": ["공학"],
+                "기계·로봇·모빌리티": ["공학"],
+                "화공·신소재·에너지공학": ["공학"],
+                "건축·도시·토목": ["공학"],
+                # 의학 계열
+                "의학": ["의학"],
+                "치의학": ["의학"],
+                "한의학": ["의학"],
+                "수의학": ["의학"],
+                "간호": ["의학"],
+                "보건·재활": ["의학"],
+                "약학": ["약학"],
+                # 기타
+                "교육": ["교육"],
+                "디자인·예술": ["예체능"],
+            }
+            dept_cats_filter = []
+            for cat in student_top_categories:
+                dept_cats_filter.extend(CATEGORY_TO_DEPT_CAT.get(cat, []))
+
+            # target_departments 의 실제 학과 카테고리도 필터에 포함
+            # (학생 카테고리 추정과 실제 추천 학과의 분야가 다를 때 보완)
+            target_dept_cats = set()
+            for u in db.get("universities", []):
+                for d in u.get("departments", []):
+                    d_name = d.get("name", "")
+                    d_aliases = d.get("aliases") or []
+                    if d_name in (target_departments or []) or \
+                       any(a in (target_departments or []) for a in d_aliases):
+                        c = d.get("category")
+                        if c: target_dept_cats.add(c)
+            dept_cats_filter.extend(target_dept_cats)
+            dept_cats_filter = list(set(dept_cats_filter))
+
+            # C 옵션 ② — target_departments 에서 학과명 핵심 키워드 추출
+            # 예: ['인공지능학과','데이터사이언스학과','컴퓨터공학과'] → ['인공지능','데이터','컴퓨터']
+            dept_keywords = []
+            for dept in (target_departments or []):
+                # 학과 어미 + 끝 '학' 까지 제거 (반복)
+                s = dept
+                while True:
+                    new = re.sub(r'(학과|학부|전공|과|부|학)$', '', s)
+                    if new == s: break
+                    s = new
+                # 공통 수식어 제거
+                for mod in ['글로벌', '국제', '융합', '미래', '첨단', '스마트']:
+                    s = s.replace(mod, '')
+                s = s.strip()
+                if len(s) >= 2:
+                    dept_keywords.append(s)
+            # 중복 제거 (순서 유지)
+            seen = set(); dept_keywords = [k for k in dept_keywords
+                                           if not (k in seen or seen.add(k))]
+
+            grade_recs = recommend_universities_by_grade(
+                db, student_grade,
+                top_n=3,
+                student_categories=dept_cats_filter if dept_cats_filter else None,
+                dept_keywords=dept_keywords if dept_keywords else None,
+                balanced_levels=True,  # E 옵션 — 안정/적정/상향 균형 분배
+            )
+
+        st.markdown(
+            "<div class='section-title' style='margin-top:2rem;'>추가 추천 (등급 기반)</div>",
+            unsafe_allow_html=True
+        )
+
+        if student_grade is None:
+            st.warning(
+                "학생의 등급 정보를 추출하지 못해 등급 기반 추가 추천을 생성할 수 없습니다."
+            )
+        elif not grade_recs:
+            st.info(
+                f"학생 관심 카테고리({', '.join(student_top_categories) or '미탐지'}) 내에서 "
+                f"등급 {student_grade}과 가까운 대학을 찾지 못했습니다."
+            )
+        else:
+            cat_filter_label = ", ".join(student_top_categories) or "전체"
+            st.markdown(
+                f"<div class='subtle' style='margin-bottom:0.6rem; font-size:0.88rem;'>"
+                f"학생 등급 <b>{student_grade}</b> + 관심 카테고리 <b>{cat_filter_label}</b>을 기준으로, "
+                f"학과 추천과는 별개로 등급만 고려한 대학 3개를 추가 추천합니다. "
+                f"학생 관심 분야 학과 내에서 합격선이 학생 등급과 가장 가까운 대학들입니다.</div>",
+                unsafe_allow_html=True
+            )
+
+            cols = st.columns(3)
+            for col_i, rec in enumerate(grade_recs):
+                with cols[col_i]:
+                    render_grade_based_card(rec, col_i + 1, student_grade)
+                    with st.expander(
+                        f"📋 {rec['university']} 전형 상세 보기",
+                        expanded=False
+                    ):
+                        render_admissions_detail_panel(
+                            rec.get("_departments_raw", []),
+                            student_grade=student_grade
+                        )
 
             # ── HTML 저장 버튼 ─────────────────────────────────
             st.markdown(
@@ -1366,6 +1734,8 @@ def main():
                 signals=signals,
                 summary=summary,
                 category_scores=category_scores,
+                grade_recs=grade_recs,
+                student_top_categories=student_top_categories,
             )
             student_name_hint = (signals.get("report_meta", {}) or {}).get("student_name") or "학생"
             st.download_button(

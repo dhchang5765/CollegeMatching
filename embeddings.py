@@ -31,11 +31,6 @@ _univ_embedding_cache: Dict[str, List[float]] = {}
 _backend_used: str = "keyword"
 
 
-def get_backend() -> str:
-    """현재 사용 중인 임베딩 백엔드 식별자."""
-    return _backend_used
-
-
 def _try_load_sentence_transformers():
     """sentence-transformers + 한국어 모델 로드 시도. 성공 시 모델 반환."""
     global _st_model, _st_load_attempted, _backend_used

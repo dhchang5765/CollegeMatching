@@ -1,7 +1,16 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import streamlit as st
 import plotly.graph_objects as go
+
+
+def _clean_html(html: str) -> str:
+    """
+    각 줄의 선두/후미 공백과 빈 줄을 제거한다.
+    Streamlit 의 st.markdown(unsafe_allow_html=True) 은 4칸 이상 들여쓰기된 줄을
+    마크다운 코드 블록으로 오인해 HTML 원본을 그대로 출력한다. 이를 방지.
+    """
+    return "\n".join(line.strip() for line in html.splitlines() if line.strip())
 
 
 def render_category_donut(category_scores: Dict[str, float]):
@@ -220,7 +229,7 @@ def inject_css():
 def render_hero():
     st.markdown("""
     <div class='hero-box'>
-      <div class='hero-title'>학생 HTML 기반 대학 추천 대시보드</div>
+      <div class='hero-title'>MOS 진단 기반 대학 추천 대시보드</div>
       <div class='hero-sub'>서울·경기권 대학 DB와 현재 예시 HTML 구조를 바탕으로 학과 및 대학 적합도를 시각적으로 정리합니다.</div>
     </div>
     """, unsafe_allow_html=True)
@@ -295,116 +304,6 @@ def render_chip_row(title: str, items: List[str], dept: bool = False):
     chips = ''.join([f'<span class="{chip_class}">{item}</span>' for item in items if item])
     empty = '<div class="subtle">표시할 항목이 없습니다.</div>'
     st.markdown(f"<div class='glass-card'><div class='section-title'>{title}</div>{chips if chips else empty}</div>", unsafe_allow_html=True)
-
-
-def render_roadmap_panel(roadmap: Dict, univ_name: str):
-    """대학 카드 안에 펼침 패널로 로드맵 표시."""
-    if not roadmap:
-        return
-    grade_level = roadmap.get("grade_level") or "학년 미확정"
-    gaps = roadmap.get("gaps", {})
-    schedule = roadmap.get("schedule", [])
-    actions = roadmap.get("actions", [])
-    timeline = roadmap.get("timeline", {})
-
-    # 갭 요약 배지
-    gap_chips = []
-    sev = gaps.get("grade_severity")
-    if sev == "safe":
-        gap_chips.append(("등급 안전", "#16a34a"))
-    elif sev == "small":
-        gap_chips.append((f"등급 갭 {gaps.get('grade_gap')}", "#ea580c"))
-    elif sev == "medium":
-        gap_chips.append((f"등급 갭 {gaps.get('grade_gap')} (중간)", "#dc2626"))
-    elif sev == "large":
-        gap_chips.append((f"등급 갭 {gaps.get('grade_gap')} (큼)", "#991b1b"))
-    if gaps.get("talent_gap") and gaps["talent_gap"] > 0.5:
-        gap_chips.append((f"인재상 미매칭 {int(gaps['talent_gap']*100)}%", "#7c3aed"))
-    if gaps.get("track_top_label"):
-        gap_chips.append((f"우선 전형: {gaps['track_top_label']}", "#1d4ed8"))
-
-    gap_chip_html = "".join(
-        f"<span style='background:{c}22; color:{c}; border:1px solid {c}55; "
-        f"padding:0.2rem 0.55rem; border-radius:999px; font-size:0.78rem; "
-        f"font-weight:700; margin:0.15rem 0.2rem 0.15rem 0;'>{txt}</span>"
-        for txt, c in gap_chips
-    ) or "<span class='subtle'>갭 정보 부족</span>"
-
-    # 분기별 스케줄 — 분기 라벨로 그룹화
-    by_quarter: Dict[str, List[Dict]] = {}
-    for s in schedule:
-        by_quarter.setdefault(s["quarter_label"], []).append(s)
-
-    quarter_html_blocks = []
-    for q_info in timeline.get("quarters", []):
-        q_label = q_info["label"]
-        items = by_quarter.get(q_label, [])
-        if not items:
-            continue
-        action_lines = "".join(
-            f"<li style='font-size:0.85rem; color:var(--text-body); "
-            f"margin:0.2rem 0; line-height:1.5;'>"
-            f"<span style='color:var(--text-faint, var(--text-subtle)); "
-            f"font-size:0.72rem; margin-right:0.4rem;'>[{it['action_title'][:14]}]</span>"
-            f"{it['milestone']}</li>"
-            for it in items
-        )
-        quarter_html_blocks.append(f"""
-        <div style='margin-bottom:0.7rem;'>
-          <div style='font-weight:700; color:var(--accent, #2563eb); font-size:0.82rem;
-                      margin-bottom:0.3rem;'>{q_label}</div>
-          <ul style='margin:0; padding-left:1.1rem;'>{action_lines}</ul>
-        </div>
-        """)
-
-    # 처방 출처 박스
-    sources_html = "".join(
-        f"<div style='font-size:0.72rem; color:var(--text-subtle); "
-        f"margin:0.1rem 0;'>· <b>{a.get('title','')[:30]}</b>: "
-        f"{a.get('source_basis','—')}</div>"
-        for a in actions
-    )
-
-    with st.expander(f"📋 {univ_name} 학습 갭 로드맵 보기", expanded=False):
-        st.markdown(
-            f"""
-            <div style='padding:0.4rem 0;'>
-              <div class='subtle' style='font-size:0.82rem; margin-bottom:0.5rem;'>
-                학년: <b>{grade_level}</b> · 대입까지 약
-                <b>{timeline.get('d_day_months','?')}</b>개월 ·
-                전체 분기 {len(timeline.get('quarters', []))}개
-              </div>
-              <div style='margin-bottom:0.7rem;'>{gap_chip_html}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if quarter_html_blocks:
-            st.markdown(
-                "<div class='section-title' style='font-size:0.92rem; margin-top:0.5rem;'>"
-                "분기별 행동 계획</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown("".join(quarter_html_blocks), unsafe_allow_html=True)
-        else:
-            st.markdown(
-                "<div class='subtle'>현재 분석된 갭에 대한 추천 행동이 없습니다.</div>",
-                unsafe_allow_html=True,
-            )
-        if sources_html:
-            st.markdown(
-                f"<div style='margin-top:0.7rem; padding-top:0.6rem; "
-                f"border-top:1px solid var(--border);'>"
-                f"<div class='subtle' style='font-size:0.78rem; font-weight:700; "
-                f"margin-bottom:0.3rem;'>처방 출처 (정책·통계 근거)</div>"
-                f"{sources_html}</div>",
-                unsafe_allow_html=True,
-            )
-        st.markdown(
-            f"<div class='subtle' style='font-size:0.74rem; margin-top:0.7rem; "
-            f"font-style:italic;'>⚠ {roadmap.get('disclaimer','')}</div>",
-            unsafe_allow_html=True,
-        )
 
 
 def render_track_recommendations(track_recs: List[Dict], student_area: str = None):
@@ -515,6 +414,159 @@ def render_score_methodology():
     )
 
 
+def render_admissions_detail_panel(departments_raw: List[Dict],
+                                    student_grade: Optional[float] = None):
+    """
+    대학 카드 안에 펼침 패널로 전형별 상세 정보 표시.
+    departments_raw: DB 의 universities[].departments[] 원본
+    student_grade: 학생 등급 (있으면 합격선 비교 행 색칠)
+    """
+    if not departments_raw:
+        return
+
+    # 모든 admissions 를 평탄화 — 학과명·중심전형·전형명·정보
+    flat_rows = []
+    for d in departments_raw:
+        dept_name = d.get("name", "")
+        for adm in d.get("admissions", []):
+            flat_rows.append({
+                "dept": dept_name,
+                "type": adm.get("type", ""),
+                "track_name": adm.get("track_name", ""),
+                "applicants": adm.get("applicants"),
+                "competition": adm.get("competition_ratio"),
+                "fill_rank": adm.get("fill_rank"),
+                "p50": adm.get("cutoff_p50"),
+                "p70": adm.get("cutoff_p70"),
+                "p90": adm.get("cutoff_p90"),
+                "subjects": adm.get("evaluated_subjects"),
+            })
+
+    if not flat_rows:
+        return
+
+    # 학생 등급과 가까운 순으로 정렬 (있을 때만)
+    if student_grade is not None:
+        flat_rows.sort(key=lambda r: abs((r["p50"] or 99) - student_grade))
+    else:
+        flat_rows.sort(key=lambda r: r["p50"] or 99)
+
+    # 표 HTML 빌드
+    def fmt(v, decimals=2):
+        if v is None: return "—"
+        if isinstance(v, float): return f"{v:.{decimals}f}"
+        return str(v)
+
+    rows_html = ""
+    for r in flat_rows[:30]:  # 최대 30개 전형 표시
+        # 학생 등급과의 거리로 행 색조 결정
+        bg = ""
+        if student_grade is not None and r["p50"] is not None:
+            dist = abs(r["p50"] - student_grade)
+            if dist <= 0.3: bg = "background:#16a34a14;"
+            elif dist <= 0.7: bg = "background:#1d4ed814;"
+            elif dist <= 1.2: bg = "background:#ea580c14;"
+        rows_html += f"""
+        <tr style='{bg}'>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem;'>{r["dept"][:18]}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem;'>{r["type"][:6]}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem;'>{r["track_name"][:18]}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["applicants"], 0)}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["competition"])}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["fill_rank"], 1)}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right; font-weight:700;'>{fmt(r["p50"])}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["p70"])}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["p90"])}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.74rem; color:var(--text-subtle);'>{(r["subjects"] or "—")[:14]}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <div style='overflow-x:auto; margin-top:0.5rem;'>
+      <table style='width:100%; border-collapse:collapse; font-size:0.78rem;'>
+        <thead style='background:var(--bg-subtle, #f1f5f9);'>
+          <tr>
+            <th style='padding:0.4rem 0.5rem; text-align:left; font-weight:700;'>모집단위</th>
+            <th style='padding:0.4rem 0.5rem; text-align:left;'>중심전형</th>
+            <th style='padding:0.4rem 0.5rem; text-align:left;'>전형명</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right;'>인원</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right;'>경쟁률</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right;'>충원순위</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right;'>50%</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right;'>70%</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right;'>90%</th>
+            <th style='padding:0.4rem 0.5rem; text-align:left;'>학종 반영 교과</th>
+          </tr>
+        </thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      <div style='margin-top:0.4rem; font-size:0.72rem; color:var(--text-subtle);'>
+        · 등급 50%/70%/90% cut 은 최종 등록자 교과 등급 분포 / 5년 인원 가중평균<br>
+        · 학생 등급과의 거리에 따라 행 색조: 초록=±0.3 이내, 파랑=±0.7 이내, 주황=±1.2 이내<br>
+        · 전형이 많은 경우 학생 등급에 가까운 순서로 최대 30개만 표시
+      </div>
+    </div>
+    """
+    st.markdown(_clean_html(table_html), unsafe_allow_html=True)
+
+
+def render_grade_based_card(rec: Dict, rank: int, student_grade: Optional[float] = None):
+    """등급 기반 추천 대학 카드."""
+    support_level = rec.get("support_level", "")
+    level_colors = {
+        "안정": "#16a34a", "적정": "#1d4ed8",
+        "상향": "#ea580c", "상향(도전)": "#dc2626",
+    }
+    color = level_colors.get(support_level, "#64748b")
+
+    talents = "".join([f'<span class="tag-chip">{x}</span>'
+                       for x in (rec.get("talent_keywords") or [])[:5]])
+    talent_statement = rec.get("talent_statement", "") or ""
+
+    # 학과별 최저 cutoff 분포 (top 6)
+    dept_rows = ""
+    for d in rec.get("all_departments_summary", []):
+        dist = abs((d["min_cutoff"] or 99) - (student_grade or 0)) if student_grade else None
+        marker = ""
+        if dist is not None:
+            if dist <= 0.3: marker = "🟢"
+            elif dist <= 0.7: marker = "🔵"
+            elif dist <= 1.2: marker = "🟠"
+        dept_rows += f"""
+        <div style='display:flex; justify-content:space-between;
+                    font-size:0.78rem; padding:0.18rem 0; border-bottom:1px solid var(--border, #e5e7eb);'>
+          <span style='color:var(--text-body);'>{marker} {d["dept"][:24]} <span class='subtle' style='font-size:0.7rem;'>({d.get("category","")})</span></span>
+          <span style='font-weight:600; color:{color};'>{d["min_cutoff"]:.2f}</span>
+        </div>
+        """
+
+    _card = f"""
+    <div class='recommend-card'>
+      <div class='recommend-head'>
+        <div>
+          <div class='subtle'>추천 {rank}
+            <span style='background:{color}22; color:{color}; border:1px solid {color}55; padding:0.18rem 0.5rem; border-radius:999px; font-size:0.72rem; font-weight:700; margin-left:0.4rem;'>{support_level}</span>
+          </div>
+          <div class='recommend-title'>{rec['university']}</div>
+          <div class='subtle'>{rec.get('region', '')} · 학과 {rec.get('department_count', 0)}개</div>
+        </div>
+        <div class='score-pill' style='background:{color}; color:white;'>
+          최저 합격선 {rec['representative_cutoff']:.2f}
+        </div>
+      </div>
+      <div class='subtle' style='margin-top:0.4rem; font-size:0.78rem;'>
+        대표 학과: <b>{rec.get('representative_dept', '')}</b> · {rec.get('representative_track', '')} · 학생 등급과 거리 <b>{rec['grade_distance']:.2f}</b>
+      </div>
+      <div class='section-title' style='margin-top:0.7rem;'>학과별 최저 합격선 (상위 6개)</div>
+      {dept_rows}
+      <div class='section-title' style='margin-top:0.8rem;'>인재상 키워드</div>
+      <div>{talents if talents else '<span class="subtle">없음</span>'}</div>
+      {("<div class='subtle' style='font-size:0.76rem; margin-top:0.5rem; font-style:italic;'>" + talent_statement + "</div>") if talent_statement else ""}
+    </div>
+    """
+    st.markdown(_clean_html(_card), unsafe_allow_html=True)
+
+
 def render_university_card(rec: Dict, rank: int):
     fit_pct = max(0, min(100, int(rec['fit_score'])))
     band_pct = max(0, min(100, int(rec.get('band_score', 50))))
@@ -582,12 +634,4 @@ def render_university_card(rec: Dict, rank: int):
       <div class="subtle" style="margin-top:0.2rem">{detail_text}</div>
     </div>
     """, unsafe_allow_html=True)
-
-
-def env_help_panel():
-    st.markdown('### .env 설정 안내')
-    st.code("""GEMINI_API_KEY=여기에_API_KEY
-APP_PASSWORD_HASH=pbkdf2_sha256$240000$<salt_hex>$<hash_hex>""", language='bash')
-    st.write('비밀번호 해시는 앱 내부 도구 또는 아래 스크립트로 생성할 수 있습니다.')
-    st.code("""python -c "import secrets,hashlib; p='your_password'; s=secrets.token_bytes(16); i=240000; d=hashlib.pbkdf2_hmac('sha256', p.encode(), s, i); print(f'pbkdf2_sha256${i}${s.hex()}${d.hex()}')\"""", language='bash')
 

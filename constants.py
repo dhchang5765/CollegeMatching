@@ -306,47 +306,6 @@ SPECIAL_PATTERNS = {
     "grade": [r"([0-9.]+)등급", r"내신\s*([0-9.]+)", r"모평\s*([0-9.]+)등급"]
 }
 
-CATEGORY_TO_FITCLUSTER = {
-    # 인문
-    "국어국문·언어": ["humanitieslanguage"],
-    "역사·철학·윤리": ["humanitieslanguage", "socialscience"],
-
-    # 사회·상경·미디어
-    "사회과학": ["socialscience"],
-    "경영·경제": ["businesssocial", "socialscience"],
-    "미디어·광고·콘텐츠": ["mediacomm", "businesssocial"],
-    "심리·상담": ["socialscience", "humanitieslanguage"],
-
-    # 자연과학
-    "수학·통계": ["mathstats", "naturalscience"],
-    "물리·화학·기초과학": ["naturalscience", "mathstats"],
-    "생명과학·바이오": ["naturalscience", "pharmacyhealthcare"],
-    "환경·지구과학": ["naturalscience"],
-
-    # 공학·IT
-    "컴퓨터·소프트웨어": ["engineeringit", "mathstats"],
-    "인공지능·데이터사이언스": ["engineeringit", "mathstats"],
-    "전기·전자·반도체": ["engineeringit", "mathstats"],
-    "기계·로봇·모빌리티": ["engineeringit"],
-    "화공·신소재·에너지공학": ["engineeringit", "naturalscience"],
-    "건축·도시·토목": ["engineeringit", "socialscience"],
-
-    # 의약학
-    "의학": ["medicine"],
-    "치의학": ["medicine"],
-    "한의학": ["medicine"],
-    "약학": ["pharmacyhealthcare", "naturalscience"],
-    "간호": ["nursinghealth"],
-    "보건·재활": ["nursinghealth", "pharmacyhealthcare"],
-    "수의학": ["medicine", "naturalscience"],
-
-    # 교육
-    "교육": ["socialscience", "humanitieslanguage"],
-
-    # 예술
-    "디자인·예술": ["mediacomm"]
-}
-
 TRACK_KEYWORD_MAP = {
     "AI": {
         "인공지능·데이터사이언스": 35,
