@@ -43,8 +43,8 @@ def render_category_donut(category_scores: Dict[str, float]):
     values = [v for _, v in major]
 
     palette = [
-        "#2563eb", "#0ea5e9", "#10b981", "#8b5cf6", "#f59e0b",
-        "#ef4444", "#06b6d4", "#84cc16", "#a855f7", "#f97316",
+        "#0d9488", "#0891b2", "#65a30d", "#7c6fd4", "#d97706",
+        "#c2683f", "#0e9488", "#9a8c30", "#8b6db8", "#b45f3d",
     ]
     colors = palette[: len(labels)]
 
@@ -97,58 +97,63 @@ def inject_css():
     <style>
     /* ─── 색상 변수 (라이트) ─────────────────────────── */
     :root {
-      --bg-app: linear-gradient(180deg, #f5f7fb 0%, #edf2f7 100%);
-      --bg-card: #ffffff;
-      --bg-card-glass: rgba(255,255,255,0.82);
-      --bg-chip: #f8fafc;
-      --bg-dept-chip: #dbeafe;
-      --bg-bar-track: #e2e8f0;
-      --border: #e5e7eb;
-      --border-soft: rgba(148,163,184,0.22);
-      --border-chip: #e2e8f0;
-      --border-dept-chip: #bfdbfe;
-      --text-primary: #0f172a;
-      --text-body: #334155;
-      --text-meta: #475569;
-      --text-subtle: #64748b;
+      /* 따뜻한 슬레이트 + 차분한 틸(teal) 강조색 — 장시간 보기 편한 저채도 */
+      --bg-app: linear-gradient(180deg, #f6f5f2 0%, #eef0ed 100%);
+      --bg-card: #fffefb;
+      --bg-card-glass: rgba(255,254,251,0.85);
+      --bg-chip: #f3f4f1;
+      --bg-dept-chip: #d8ede9;
+      --bg-bar-track: #e4e6e1;
+      --border: #e3e4df;
+      --border-soft: rgba(120,130,125,0.20);
+      --border-chip: #e0e2dd;
+      --border-dept-chip: #a9d6cd;
+      --text-primary: #1f2a2e;
+      --text-body: #3c474b;
+      --text-meta: #566065;
+      --text-subtle: #6b7479;
       --text-on-pill: #ffffff;
-      --text-dept-chip: #1d4ed8;
-      --text-chip: #334155;
-      --shadow-soft: 0 12px 30px rgba(15,23,42,0.06);
-      --shadow-mid:  0 18px 32px rgba(15,23,42,0.06);
-      --shadow-strong: 0 20px 40px rgba(37,99,235,0.18);
+      --text-dept-chip: #0f766e;
+      --text-chip: #3c474b;
+      --accent: #0d9488;
+      --accent-strong: #0f766e;
+      --shadow-soft: 0 12px 30px rgba(31,42,46,0.05);
+      --shadow-mid:  0 18px 32px rgba(31,42,46,0.06);
+      --shadow-strong: 0 18px 38px rgba(13,148,136,0.14);
     }
 
     /* ─── 색상 변수 (다크) — OS 설정 자동 반응 ─────── */
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg-app: linear-gradient(180deg, #0b1220 0%, #111827 100%);
-        --bg-card: #1e293b;
-        --bg-card-glass: rgba(30,41,59,0.85);
-        --bg-chip: #1e293b;
-        --bg-dept-chip: #1e3a8a;
-        --bg-bar-track: #334155;
-        --border: #334155;
-        --border-soft: rgba(148,163,184,0.18);
-        --border-chip: #334155;
-        --border-dept-chip: #2563eb;
-        --text-primary: #f1f5f9;
-        --text-body: #cbd5e1;
-        --text-meta: #94a3b8;
-        --text-subtle: #94a3b8;
+        --bg-app: linear-gradient(180deg, #14181a 0%, #1a2023 100%);
+        --bg-card: #222a2d;
+        --bg-card-glass: rgba(34,42,45,0.88);
+        --bg-chip: #28312f;
+        --bg-dept-chip: #134e4a;
+        --bg-bar-track: #374151;
+        --border: #374151;
+        --border-soft: rgba(148,163,160,0.18);
+        --border-chip: #374151;
+        --border-dept-chip: #115e59;
+        --text-primary: #ecefed;
+        --text-body: #c8d0cd;
+        --text-meta: #9aa5a2;
+        --text-subtle: #97a2a0;
         --text-on-pill: #ffffff;
-        --text-dept-chip: #93c5fd;
-        --text-chip: #cbd5e1;
-        --shadow-soft: 0 12px 30px rgba(0,0,0,0.35);
-        --shadow-mid:  0 18px 32px rgba(0,0,0,0.4);
-        --shadow-strong: 0 20px 40px rgba(37,99,235,0.30);
+        --text-dept-chip: #5eead4;
+        --text-chip: #c8d0cd;
+        --accent: #2dd4bf;
+        --accent-strong: #5eead4;
+        --shadow-soft: 0 12px 30px rgba(0,0,0,0.38);
+        --shadow-mid:  0 18px 32px rgba(0,0,0,0.42);
+        --shadow-strong: 0 18px 38px rgba(13,148,136,0.28);
       }
     }
 
     /* ─── 컴포넌트 ─────────────────────────────────── */
     .stApp { background: var(--bg-app); }
     .hero-box { padding: 1.4rem 1.6rem; border-radius: 22px;
-                background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #2563eb 100%);
+                background: linear-gradient(135deg, #1f2a2e 0%, #155e57 55%, #0d9488 100%);
                 color: #fff; box-shadow: var(--shadow-strong); margin-bottom: 1rem; }
     .hero-title { font-size: 1.75rem; font-weight: 800; margin-bottom: 0.35rem; color: #fff; }
     .hero-sub { font-size: 0.98rem; opacity: 0.9; color: #fff; }
@@ -179,7 +184,7 @@ def inject_css():
     .recommend-head { display: flex; justify-content: space-between; align-items: center;
                       gap: 1rem; margin-bottom: 0.75rem; }
     .recommend-title { font-size: 1.12rem; font-weight: 800; color: var(--text-primary); }
-    .score-pill { background: linear-gradient(135deg, #1d4ed8, #2563eb); color: var(--text-on-pill);
+    .score-pill { background: linear-gradient(135deg, #0f766e, #0d9488); color: var(--text-on-pill);
                   padding: 0.45rem 0.8rem; border-radius: 999px;
                   font-weight: 800; font-size: 0.9rem; white-space: nowrap; }
 
@@ -189,7 +194,7 @@ def inject_css():
     .score-bar { width: 100%; height: 10px; background: var(--bg-bar-track);
                  border-radius: 999px; overflow: hidden; }
     .score-fill { height: 10px; border-radius: 999px;
-                  background: linear-gradient(90deg, #60a5fa, #1d4ed8); }
+                  background: linear-gradient(90deg, #5eead4, #0d9488); }
 
     .login-wrap { max-width: 420px; margin: 2rem auto 0 auto; padding: 1rem;
                   background: var(--bg-card-glass); border-radius: 20px;
@@ -229,7 +234,7 @@ def inject_css():
 def render_hero():
     st.markdown("""
     <div class='hero-box'>
-      <div class='hero-title'>MOS 진단 기반 대학 추천 대시보드</div>
+      <div class='hero-title'>학생 HTML 기반 대학 추천 대시보드</div>
       <div class='hero-sub'>서울·경기권 대학 DB와 현재 예시 HTML 구조를 바탕으로 학과 및 대학 적합도를 시각적으로 정리합니다.</div>
     </div>
     """, unsafe_allow_html=True)
@@ -459,24 +464,24 @@ def render_admissions_detail_panel(departments_raw: List[Dict],
 
     rows_html = ""
     for r in flat_rows[:30]:  # 최대 30개 전형 표시
-        # 학생 등급과의 거리로 행 색조 결정
+        # 학생 등급과의 거리로 행 색조 결정 (다크/라이트 모두 안전한 저투명도)
         bg = ""
         if student_grade is not None and r["p50"] is not None:
             dist = abs(r["p50"] - student_grade)
-            if dist <= 0.3: bg = "background:#16a34a14;"
-            elif dist <= 0.7: bg = "background:#1d4ed814;"
-            elif dist <= 1.2: bg = "background:#ea580c14;"
+            if dist <= 0.3: bg = "background:rgba(22,163,74,0.12);"
+            elif dist <= 0.7: bg = "background:rgba(13,148,136,0.12);"
+            elif dist <= 1.2: bg = "background:rgba(234,88,12,0.10);"
         rows_html += f"""
-        <tr style='{bg}'>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem;'>{r["dept"][:18]}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem;'>{r["type"][:6]}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem;'>{r["track_name"][:18]}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["applicants"], 0)}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["competition"])}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["fill_rank"], 1)}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right; font-weight:700;'>{fmt(r["p50"])}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["p70"])}</td>
-          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right;'>{fmt(r["p90"])}</td>
+        <tr style='{bg} border-bottom:1px solid var(--border);'>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; color:var(--text-body);'>{r["dept"][:18]}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; color:var(--text-body);'>{r["type"][:6]}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; color:var(--text-body);'>{r["track_name"][:18]}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right; color:var(--text-body);'>{fmt(r["applicants"], 0)}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right; color:var(--text-body);'>{fmt(r["competition"])}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right; color:var(--text-body);'>{fmt(r["fill_rank"], 1)}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.82rem; text-align:right; font-weight:800; color:var(--accent-strong);'>{fmt(r["p50"])}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right; color:var(--text-meta);'>{fmt(r["p70"])}</td>
+          <td style='padding:0.3rem 0.5rem; font-size:0.78rem; text-align:right; color:var(--text-meta);'>{fmt(r["p90"])}</td>
           <td style='padding:0.3rem 0.5rem; font-size:0.74rem; color:var(--text-subtle);'>{(r["subjects"] or "—")[:14]}</td>
         </tr>
         """
@@ -484,25 +489,25 @@ def render_admissions_detail_panel(departments_raw: List[Dict],
     table_html = f"""
     <div style='overflow-x:auto; margin-top:0.5rem;'>
       <table style='width:100%; border-collapse:collapse; font-size:0.78rem;'>
-        <thead style='background:var(--bg-subtle, #f1f5f9);'>
+        <thead style='background:var(--bg-chip); border-bottom:2px solid var(--accent);'>
           <tr>
-            <th style='padding:0.4rem 0.5rem; text-align:left; font-weight:700;'>모집단위</th>
-            <th style='padding:0.4rem 0.5rem; text-align:left;'>중심전형</th>
-            <th style='padding:0.4rem 0.5rem; text-align:left;'>전형명</th>
-            <th style='padding:0.4rem 0.5rem; text-align:right;'>인원</th>
-            <th style='padding:0.4rem 0.5rem; text-align:right;'>경쟁률</th>
-            <th style='padding:0.4rem 0.5rem; text-align:right;'>충원순위</th>
-            <th style='padding:0.4rem 0.5rem; text-align:right;'>50%</th>
-            <th style='padding:0.4rem 0.5rem; text-align:right;'>70%</th>
-            <th style='padding:0.4rem 0.5rem; text-align:right;'>90%</th>
-            <th style='padding:0.4rem 0.5rem; text-align:left;'>학종 반영 교과</th>
+            <th style='padding:0.4rem 0.5rem; text-align:left; font-weight:700; color:var(--text-primary);'>모집단위</th>
+            <th style='padding:0.4rem 0.5rem; text-align:left; font-weight:700; color:var(--text-primary);'>중심전형</th>
+            <th style='padding:0.4rem 0.5rem; text-align:left; font-weight:700; color:var(--text-primary);'>전형명</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right; font-weight:700; color:var(--text-primary);'>인원</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right; font-weight:700; color:var(--text-primary);'>경쟁률</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right; font-weight:700; color:var(--text-primary);'>충원순위</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right; font-weight:800; color:var(--accent-strong); background:var(--bg-dept-chip);'>50%</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right; font-weight:700; color:var(--text-primary);'>70%</th>
+            <th style='padding:0.4rem 0.5rem; text-align:right; font-weight:700; color:var(--text-primary);'>90%</th>
+            <th style='padding:0.4rem 0.5rem; text-align:left; font-weight:700; color:var(--text-primary);'>학종 반영 교과</th>
           </tr>
         </thead>
         <tbody>{rows_html}</tbody>
       </table>
       <div style='margin-top:0.4rem; font-size:0.72rem; color:var(--text-subtle);'>
         · 등급 50%/70%/90% cut 은 최종 등록자 교과 등급 분포 / 5년 인원 가중평균<br>
-        · 학생 등급과의 거리에 따라 행 색조: 초록=±0.3 이내, 파랑=±0.7 이내, 주황=±1.2 이내<br>
+        · 50% cut(기준열)이 핵심 합격선이며, 학생 등급과의 거리에 따라 행 색조: 초록=±0.3, 청록=±0.7, 주황=±1.2 이내<br>
         · 전형이 많은 경우 학생 등급에 가까운 순서로 최대 30개만 표시
       </div>
     </div>

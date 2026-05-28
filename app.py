@@ -1095,7 +1095,7 @@ def build_recommendation_html(recs: List[Dict],
         grade_card_blocks = []
         for i, r in enumerate(grade_recs, start=1):
             lvl = r.get("support_level", "")
-            lvl_color = {"안정":"#16a34a","적정":"#1d4ed8","상향":"#ea580c",
+            lvl_color = {"안정":"#16a34a","적정":"#0d9488","상향":"#ea580c",
                          "상향(도전)":"#dc2626"}.get(lvl, "#64748b")
             dept_rows_html = ""
             for d in r.get("all_departments_summary", []):
@@ -1137,9 +1137,9 @@ def build_recommendation_html(recs: List[Dict],
                 bg = ""
                 if student_grade is not None and fr["p50"] is not None:
                     dist = abs(fr["p50"] - student_grade)
-                    if dist <= 0.3: bg = "background:#16a34a14;"
-                    elif dist <= 0.7: bg = "background:#1d4ed814;"
-                    elif dist <= 1.2: bg = "background:#ea580c14;"
+                    if dist <= 0.3: bg = "background:rgba(22,163,74,0.12);"
+                    elif dist <= 0.7: bg = "background:rgba(13,148,136,0.12);"
+                    elif dist <= 1.2: bg = "background:rgba(234,88,12,0.10);"
                 tbl_rows += (
                     f"<tr style='{bg}'>"
                     f"<td>{esc(fr['dept'][:18])}</td>"
@@ -1208,22 +1208,22 @@ def build_recommendation_html(recs: List[Dict],
 
     css = """
     :root {
-      --bg-app: #f5f7fb; --bg-card: #ffffff; --bg-panel: #ffffff;
-      --bg-chip: #f1f5f9; --bg-dept-chip: #dbeafe; --bg-bar: #f1f5f9;
+      --bg-app: #f6f5f2; --bg-card: #fffefb; --bg-panel: #fffefb;
+      --bg-chip: #f3f4f1; --bg-dept-chip: #d8ede9; --bg-bar: #e4e6e1;
       --bg-note: #f8fafc; --bg-cats-divider: #f1f5f9;
       --text-primary: #0f172a; --text-body: #334155; --text-meta: #475569;
       --text-subtle: #64748b; --text-faint: #94a3b8;
-      --text-chip: #334155; --text-dept-chip: #1d4ed8; --accent: #2563eb;
+      --text-chip: #3c474b; --text-dept-chip: #0f766e; --accent: #0d9488;
       --border: #e2e8f0;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg-app: #0b1220; --bg-card: #1e293b; --bg-panel: #1e293b;
-        --bg-chip: #1e293b; --bg-dept-chip: #1e3a8a; --bg-bar: #334155;
+        --bg-app: #14181a; --bg-card: #222a2d; --bg-panel: #222a2d;
+        --bg-chip: #28312f; --bg-dept-chip: #134e4a; --bg-bar: #374151;
         --bg-note: #0f172a; --bg-cats-divider: #334155;
         --text-primary: #f1f5f9; --text-body: #cbd5e1; --text-meta: #94a3b8;
         --text-subtle: #94a3b8; --text-faint: #64748b;
-        --text-chip: #cbd5e1; --text-dept-chip: #93c5fd; --accent: #60a5fa;
+        --text-chip: #c8d0cd; --text-dept-chip: #5eead4; --accent: #2dd4bf;
         --border: #334155;
       }
     }
@@ -1231,7 +1231,7 @@ def build_recommendation_html(recs: List[Dict],
            background: var(--bg-app); color: var(--text-primary);
            padding: 2rem; line-height: 1.55; }
     .container { max-width: 1200px; margin: 0 auto; }
-    .header { background: linear-gradient(135deg,#0f172a,#1e3a8a,#2563eb); color:white;
+    .header { background: linear-gradient(135deg,#1f2a2e,#155e57,#0d9488); color:white;
               padding: 1.4rem 1.6rem; border-radius: 18px; margin-bottom: 1.2rem; }
     .header h1 { margin: 0 0 0.3rem 0; font-size: 1.5rem; color: white; }
     .header .sub { opacity: 0.85; font-size: 0.9rem; }
@@ -1256,12 +1256,12 @@ def build_recommendation_html(recs: List[Dict],
             text-transform: uppercase; letter-spacing: 0.05em; }
     .univ { font-size: 1.05rem; font-weight: 800; color: var(--text-primary); }
     .meta { font-size: 0.8rem; color: var(--text-faint); margin-top: 0.1rem; }
-    .pill { background: linear-gradient(135deg,#1d4ed8,#3b82f6); color: white;
+    .pill { background: linear-gradient(135deg,#0f766e,#0d9488); color: white;
             padding: 0.4rem 0.7rem; border-radius: 999px; font-weight: 800;
             font-size: 0.85rem; white-space: nowrap; }
     .bar-label { font-size: 0.75rem; color: var(--text-subtle); margin: 0.4rem 0 0.15rem; }
     .bar { height: 8px; background: var(--bg-bar); border-radius: 999px; overflow: hidden; }
-    .fill { height: 8px; background: linear-gradient(90deg,#93c5fd,#2563eb); border-radius: 999px; }
+    .fill { height: 8px; background: linear-gradient(90deg,#5eead4,#0d9488); border-radius: 999px; }
     .kv { font-size: 0.82rem; color: var(--text-meta); margin-top: 0.45rem; }
     .kv b { color: var(--text-primary); margin-right: 0.3rem; }
     .note { font-size: 0.8rem; color: var(--text-subtle); margin-top: 0.5rem;
@@ -1335,7 +1335,7 @@ def build_recommendation_html(recs: List[Dict],
 
 def main():
     st.set_page_config(
-        page_title='MOS 진단 기반 대학 추천기',
+        page_title='학생 HTML 기반 대학 추천기',
         page_icon='🎓',
         layout='wide',
         initial_sidebar_state='collapsed'
@@ -1368,8 +1368,8 @@ def main():
     with top2:
         render_metric_card(
             '입력 형식',
-            '학생 HTML + 답변 JSON',
-            '학생 정보를 담은 MOS 진단 보고서와 답변 JSON을 삽입하세요.'
+            '학생 HTML',
+            '학생 정보를 담은 MOS 진단 보고서를 삽입하세요.'
         )
     with top3:
         render_metric_card(
@@ -1511,31 +1511,34 @@ def main():
                     st.json(dec["audit_trail"][:40])
 
 
-        # ── 상단: 학생 분석 영역 (좌우 2열) ─────────────────────
+        # ── 상단: 학생 분석 영역 ────────────────────────────────
+        # 가독성 개선 — 학생 프로파일(핵심)을 넓게 두고, 보조 정보(요약·계열)는
+        # 좁은 우측 컬럼으로 분리해 시선이 프로파일 → 보조 순으로 흐르도록 함
         st.markdown(
             "<div class='section-title' style='margin-top:1rem;'>학생 분석</div>",
             unsafe_allow_html=True
         )
-        left, right = st.columns([1, 1], gap="medium")
+
+        from student_profile import build_student_profile
+        profile = build_student_profile(
+            signals, answer_result,
+            answers_text=answers_text if both_uploaded else None
+        )
+
+        left, right = st.columns([1.55, 1], gap="large")
         with left:
             render_chip_row('우선 추천 학과', target_departments, dept=True)
-
-            # ── 학생 프로파일 (4슬롯: 강점·약점·관심·위험) ──────
-            from student_profile import build_student_profile
-            profile = build_student_profile(
-                signals, answer_result,
-                answers_text=answers_text if both_uploaded else None
-            )
             render_student_profile_card(profile)
-
         with right:
+            # 계열 적합도(원그래프)를 우측 상단에 — 한눈에 분야 분포 파악
+            render_category_donut(category_scores)
             st.markdown(
-                f"<div class='glass-card'><div class='section-title'>요약 분석</div>"
-                f"<div class='subtle' style='font-size:0.96rem; line-height:1.7; color:var(--text-body);'>{summary}</div></div>",
+                f"<div class='glass-card' style='margin-top:0.6rem;'>"
+                f"<div class='section-title' style='font-size:0.98rem;'>요약 분석</div>"
+                f"<div class='subtle' style='font-size:0.92rem; line-height:1.65; "
+                f"color:var(--text-body);'>{summary}</div></div>",
                 unsafe_allow_html=True
             )
-            # 계열 적합도 (원그래프) — 좌측 칩 묶음과 높이 균형 맞추기 좋음
-            render_category_donut(category_scores)
 
         # ── 중간: 추천 전형 (A3) ────────────────────────────────
         render_track_recommendations(track_recs, student_area)
