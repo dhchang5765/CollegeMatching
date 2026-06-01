@@ -1,5 +1,5 @@
 GEMINI_MODEL = "gemini-3-flash"
-JSON_DB_PATH = "merged_university_db_v3_trimmed.json"
+JSON_DB_PATH = "university_db.json"
 
 CATEGORY_KEYWORDS = {
     "국어국문·언어": [
